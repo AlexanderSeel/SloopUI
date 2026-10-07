@@ -6,7 +6,8 @@ export interface VirtualTrackSettings{
   cutoff?:number; resonance?:number; attack?:number; decay?:number; sustain?:number; release?:number;
   drive?:number; chorus?:number; delay?:number; reverb?:number;
 }
-export interface VirtualBounceEvent{time:number;track:number;note:string;duration:number;velocity:number;engine?:SloopVirtualEngine;preset?:number;}
+export interface VirtualBounceEvent{time:number;track:number;note:string;duration:number;velocity:number;engine?:SloopVirtualEngine;preset?:number;lane?:number;}
+type TrackSampleSource={buffer:AudioBuffer;root:string};
 
 export class VirtualStudioEngine{
  private channels=Array.from({length:4},()=>new Tone.Channel().toDestination());
@@ -17,12 +18,14 @@ export class VirtualStudioEngine{
  private reverbs=Array.from({length:3},()=>new Tone.Reverb({decay:1.8,wet:0}));
  private synths=[this.makeSynth(),this.makeSynth(),this.makeSynth()];
  private trackSamplers=new Map<number,Tone.Sampler>();
+ private trackSampleSources=new Map<number,TrackSampleSource>();
  private drum=new Tone.MembraneSynth().connect(this.channels[3]);
  private samples=new Map<number,Tone.Player>();
+ private sampleSources=new Map<number,AudioBuffer>();
  constructor(){for(let i=0;i<3;i++)this.synths[i].chain(this.filters[i],this.distortions[i],this.choruses[i],this.delays[i],this.reverbs[i],this.channels[i]);}
  private makeSynth(){return new Tone.PolySynth(Tone.Synth,{oscillator:{type:'sawtooth'},envelope:{attack:.01,decay:.2,sustain:.7,release:.6}});}
  async start(){await Tone.start();await Promise.all(this.reverbs.map(r=>r.generate().catch(()=>undefined)));}
- dispose(){this.synths.forEach(s=>s.dispose());this.trackSamplers.forEach(s=>s.dispose());this.filters.forEach(x=>x.dispose());this.distortions.forEach(x=>x.dispose());this.choruses.forEach(x=>x.dispose());this.delays.forEach(x=>x.dispose());this.reverbs.forEach(x=>x.dispose());this.drum.dispose();this.samples.forEach(p=>p.dispose());this.channels.forEach(c=>c.dispose());}
+ dispose(){this.synths.forEach(s=>s.dispose());this.trackSamplers.forEach(s=>s.dispose());this.trackSamplers.clear();this.filters.forEach(x=>x.dispose());this.distortions.forEach(x=>x.dispose());this.choruses.forEach(x=>x.dispose());this.delays.forEach(x=>x.dispose());this.reverbs.forEach(x=>x.dispose());this.drum.dispose();this.samples.forEach(p=>p.dispose());this.samples.clear();this.channels.forEach(c=>c.dispose());}
  configure(track:number,settings:VirtualTrackSettings){
   const ch=this.channels[track];if(!ch)return;
   ch.volume.value=settings.mute?-Infinity:Tone.gainToDb(Math.max(.0001,settings.level/127));
@@ -39,10 +42,22 @@ export class VirtualStudioEngine{
   reverb.wet.value=normalize127(settings.reverb??0)*.7;reverb.decay=.5+normalize127(settings.reverb??0)*5;
  }
  trigger(track:number,note:string,duration='16n',velocity=.8){if(track===3){this.drum.triggerAttackRelease(note,'32n',undefined,velocity);return;}const sampler=this.trackSamplers.get(track);if(sampler)sampler.triggerAttackRelease(note,duration,undefined,velocity);else this.synths[track]?.triggerAttackRelease(note,duration,undefined,velocity);}
- async setTrackSample(track:number,buffer:AudioBuffer,root='C3'){if(track<0||track>2)throw new Error('Virtual sample instruments are available on synth tracks 1–3.');this.trackSamplers.get(track)?.dispose();const sampler=new Tone.Sampler({urls:{[root]:buffer}}).chain(this.filters[track],this.distortions[track],this.choruses[track],this.delays[track],this.reverbs[track],this.channels[track]);await Tone.loaded();this.trackSamplers.set(track,sampler);}
- clearTrackSample(track:number){this.trackSamplers.get(track)?.dispose();this.trackSamplers.delete(track);}
- async setSample(lane:number,buffer:AudioBuffer){const old=this.samples.get(lane);old?.dispose();const player=new Tone.Player(buffer).connect(this.channels[3]);this.samples.set(lane,player);}
+ async setTrackSample(track:number,buffer:AudioBuffer,root='C3'){if(track<0||track>2)throw new Error('Virtual sample instruments are available on synth tracks 1–3.');this.trackSamplers.get(track)?.dispose();const sampler=new Tone.Sampler({urls:{[root]:buffer}}).chain(this.filters[track],this.distortions[track],this.choruses[track],this.delays[track],this.reverbs[track],this.channels[track]);await Tone.loaded();this.trackSamplers.set(track,sampler);this.trackSampleSources.set(track,{buffer,root});}
+ clearTrackSample(track:number){this.trackSamplers.get(track)?.dispose();this.trackSamplers.delete(track);this.trackSampleSources.delete(track);}
+ async setSample(lane:number,buffer:AudioBuffer){const old=this.samples.get(lane);old?.dispose();const player=new Tone.Player(buffer).connect(this.channels[3]);this.samples.set(lane,player);this.sampleSources.set(lane,buffer);}
+ clearSample(lane:number){this.samples.get(lane)?.dispose();this.samples.delete(lane);this.sampleSources.delete(lane);}
  triggerSample(lane:number){this.samples.get(lane)?.start();}
- async bounce(events:VirtualBounceEvent[],seconds:number):Promise<AudioBuffer>{const rendered=await Tone.Offline(({transport})=>{const channels=Array.from({length:4},()=>new Tone.Channel().toDestination());const synths=[this.makeSynth(),this.makeSynth(),this.makeSynth()];synths.forEach((s,i)=>s.connect(channels[i]));const drum=new Tone.MembraneSynth().connect(channels[3]);for(const e of events){if(e.track<3){const profile=virtualPresetProfile(e.engine??'ANALOG',e.preset??0);synths[e.track]?.set({oscillator:{type:profile.wave} as any,detune:profile.detune,envelope:{attack:profile.attack,decay:profile.decay,sustain:profile.sustain,release:profile.release}});}transport.scheduleOnce(()=>{if(e.track===3)drum.triggerAttackRelease(e.note,e.duration,undefined,e.velocity);else synths[e.track]?.triggerAttackRelease(e.note,e.duration,undefined,e.velocity);},e.time);}transport.start();},seconds);const buffer=rendered.get();if(!buffer)throw new Error('Tone.js returned no offline render buffer.');return buffer;}
+ async bounce(events:VirtualBounceEvent[],seconds:number):Promise<AudioBuffer>{
+  const trackSources=new Map(this.trackSampleSources),drumSources=new Map(this.sampleSources);
+  const rendered=await Tone.Offline(({transport})=>{
+   const channels=Array.from({length:4},()=>new Tone.Channel().toDestination());
+   const synths=[this.makeSynth(),this.makeSynth(),this.makeSynth()];synths.forEach((s,i)=>s.connect(channels[i]));
+   const samplers=new Map<number,Tone.Sampler>();for(const[track,source]of trackSources)samplers.set(track,new Tone.Sampler({urls:{[source.root]:source.buffer}}).connect(channels[track]));
+   const drum=new Tone.MembraneSynth().connect(channels[3]);const players=new Map<number,Tone.Player>();for(const[lane,buffer]of drumSources)players.set(lane,new Tone.Player(buffer).connect(channels[3]));
+   for(const e of events){if(e.track<3&&!samplers.has(e.track)){const profile=virtualPresetProfile(e.engine??'ANALOG',e.preset??0);synths[e.track]?.set({oscillator:{type:profile.wave} as any,detune:profile.detune,envelope:{attack:profile.attack,decay:profile.decay,sustain:profile.sustain,release:profile.release}});}transport.scheduleOnce(()=>{if(e.track===3){const player=e.lane==null?undefined:players.get(e.lane);if(player)player.start();else drum.triggerAttackRelease(e.note,e.duration,undefined,e.velocity);}else{const sampler=samplers.get(e.track);if(sampler)sampler.triggerAttackRelease(e.note,e.duration,undefined,e.velocity);else synths[e.track]?.triggerAttackRelease(e.note,e.duration,undefined,e.velocity);}},e.time);}
+   transport.start();
+  },seconds);
+  const buffer=rendered.get();if(!buffer)throw new Error('Tone.js returned no offline render buffer.');return buffer;
+ }
 }
 function mapTime(v:number,min:number,max:number){return min+(Math.max(0,Math.min(127,v))/127)*(max-min);}function blend(a:number,b:number,t:number){return a*(1-t)+b*t;}function normalize127(v:number){return Math.max(0,Math.min(1,v/127));}
