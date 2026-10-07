@@ -2,9 +2,7 @@ import type { ParameterDescriptor, SessionState } from '../../core/SloopDeviceSe
 
 const W=220,H=86;
 export type SynthVisualKind='filter'|'adsr'|'lfo';
-export function SynthVisualizer({state,kind}:{state:SessionState;kind:SynthVisualKind}){
- if(kind==='adsr')return <AdsrScope state={state}/>;if(kind==='lfo')return <LfoScope state={state}/>;return <FilterScope state={state}/>;
-}
+export function SynthVisualizer({state,kind}:{state:SessionState;kind:SynthVisualKind}){if(kind==='adsr')return <AdsrScope state={state}/>;if(kind==='lfo')return <LfoScope state={state}/>;return <FilterScope state={state}/>;}
 function LfoScope({state}:{state:SessionState}){const rate=findValue(state,['RATE']),wave=findDescriptor(state,['WAVE']),phase=findValue(state,['PHS','PHASE']),fade=findValue(state,['FADE']);if(rate===undefined&&wave===undefined)return null;return <Scope title="LFO" hint={wave?.enumValues?.[Math.max(0,(valueOf(state,wave)-wave.min))]??'WAVE'}><LfoGraph rate={norm(rate)} wave={wave?valueOf(state,wave)-wave.min:0} phase={norm(phase)} fade={norm(fade)}/></Scope>}
 function FilterScope({state}:{state:SessionState}){const cutoff=findValue(state,['CUT','CUTOFF','FLT','FILTER','TONE']),res=findValue(state,['RES','RESO','RESONANCE']);if(cutoff===undefined&&res===undefined)return null;return <Scope title="FILTER" hint={`cut ${percent(cutoff)} · res ${percent(res)}`}><FilterGraph cutoff={filterValue(cutoff)} resonance={norm(res)}/></Scope>}
 function AdsrScope({state}:{state:SessionState}){const attack=findValue(state,['ATK','ATTACK']),decay=findValue(state,['DEC','DECAY']),sustain=findValue(state,['SUS','SUSTAIN']),release=findValue(state,['REL','RELEASE']);if([attack,decay,sustain,release].every(v=>v===undefined))return null;return <Scope title="AMP ENVELOPE" hint={`A ${percent(attack)} D ${percent(decay)} S ${percent(sustain)} R ${percent(release)}`}><AdsrGraph attack={norm(attack)} decay={norm(decay)} sustain={norm(sustain)} release={norm(release)}/></Scope>}
@@ -16,4 +14,4 @@ function findDescriptor(state:SessionState,labels:string[]){const upper=labels.m
 function findValue(state:SessionState,labels:string[]){const d=findDescriptor(state,labels);return d?normalizeDescriptor(valueOf(state,d),d):undefined;}
 function valueOf(state:SessionState,d:ParameterDescriptor){return state.values[`0:${d.id}`]??d.defaultValue;}
 function normalizeDescriptor(value:number,d:ParameterDescriptor){return d.max===d.min?0:(value-d.min)/(d.max-d.min);}
-function norm(v:number|undefined){return Math.max(0,Math.min(1,v??0));}function percent(v:number|undefined){return `${Math.round(norm(v)*100)}%`;}function filterValue(v:number|undefined){return norm(v===undefined?.5:v);}
+function norm(v:number|undefined){return Math.max(0,Math.min(1,v??0));}function percent(v:number|undefined){return `${Math.round(norm(v)*100)}%`;}function filterValue(v:number|undefined){return norm(v===undefined ? .5 : v);}
