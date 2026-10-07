@@ -11,17 +11,11 @@ export interface SloopTransport {
   subscribe(listener: (frame: SloopFrame) => void): () => void;
 }
 
-declare global {
-  interface Navigator {
-    requestMIDIAccess?: (options?: { sysex?: boolean; software?: boolean }) => Promise<any>;
-  }
-}
-
 export class WebMidiSloopTransport implements SloopTransport {
   state: ConnectionState = 'idle';
-  private access: any;
-  private input: any;
-  private output: any;
+  private access: MIDIAccess | undefined;
+  private input: MIDIInput | undefined;
+  private output: MIDIOutput | undefined;
   private pingTimer?: number;
   private listeners = new Set<(frame: SloopFrame) => void>();
   private pending = new Map<number, Array<{ resolve: (frame: SloopFrame) => void; reject: (error: Error) => void; timer: number }>>();
@@ -31,12 +25,12 @@ export class WebMidiSloopTransport implements SloopTransport {
   static async listPorts(): Promise<MidiPortDescriptor[]> {
     if (!navigator.requestMIDIAccess) throw new Error('Web MIDI is unavailable in this browser.');
     const access = await navigator.requestMIDIAccess({ sysex: true });
-    const mapPort = (port: any, type: 'input' | 'output'): MidiPortDescriptor => ({
-      id: String(port.id), name: String(port.name ?? 'Unnamed MIDI port'), manufacturer: String(port.manufacturer ?? ''), type,
+    const mapPort = (port: MIDIPort, type: 'input' | 'output'): MidiPortDescriptor => ({
+      id: port.id, name: port.name ?? 'Unnamed MIDI port', manufacturer: port.manufacturer ?? '', type,
     });
     return [
-      ...Array.from(access.inputs.values(), (port: any) => mapPort(port, 'input')),
-      ...Array.from(access.outputs.values(), (port: any) => mapPort(port, 'output')),
+      ...Array.from(access.inputs.values(), (port) => mapPort(port, 'input')),
+      ...Array.from(access.outputs.values(), (port) => mapPort(port, 'output')),
     ];
   }
 
@@ -50,9 +44,9 @@ export class WebMidiSloopTransport implements SloopTransport {
       this.input = this.choosePort(inputs, this.selection.inputId);
       this.output = this.choosePort(outputs, this.selection.outputId);
       if (!this.input || !this.output) throw new Error('No MIDI input/output pair found. Select the FM-1 ports explicitly and retry.');
-      await this.input.open?.();
-      await this.output.open?.();
-      this.input.onmidimessage = (event: any) => this.onMessage(new Uint8Array(event.data));
+      await this.input.open();
+      await this.output.open();
+      this.input.onmidimessage = (event) => this.onMessage(new Uint8Array(event.data));
       this.access.onstatechange = () => {
         if (this.input?.state === 'disconnected' || this.output?.state === 'disconnected') void this.disconnect();
       };
@@ -75,8 +69,8 @@ export class WebMidiSloopTransport implements SloopTransport {
     }
     if (this.input) this.input.onmidimessage = null;
     if (this.access) this.access.onstatechange = null;
-    try { await this.input?.close?.(); } catch { /* optional */ }
-    try { await this.output?.close?.(); } catch { /* optional */ }
+    try { await this.input?.close(); } catch { /* optional */ }
+    try { await this.output?.close(); } catch { /* optional */ }
     this.input = undefined;
     this.output = undefined;
     this.access = undefined;
@@ -105,9 +99,9 @@ export class WebMidiSloopTransport implements SloopTransport {
     return () => { this.listeners.delete(listener); };
   }
 
-  private choosePort(ports: any[], requestedId?: string): any {
-    if (requestedId) return ports.find((port) => String(port.id) === requestedId);
-    const score = (port: any) => /m-vave|fm-1|sloop/i.test(`${port?.manufacturer ?? ''} ${port?.name ?? ''}`) ? 100 : 0;
+  private choosePort<T extends MIDIPort>(ports: T[], requestedId?: string): T | undefined {
+    if (requestedId) return ports.find((port) => port.id === requestedId);
+    const score = (port: MIDIPort) => /m-vave|fm-1|sloop/i.test(`${port.manufacturer ?? ''} ${port.name ?? ''}`) ? 100 : 0;
     return [...ports].sort((a, b) => score(b) - score(a))[0];
   }
 
