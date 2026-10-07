@@ -94,7 +94,10 @@ export class SloopDeviceSession {
   constructor(private readonly transport: SloopTransport) {}
 
   snapshot(): SessionState { return this.state; }
-  subscribe(listener: (state: SessionState) => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  subscribe(listener: (state: SessionState) => void): () => void {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  }
 
   async connect(): Promise<void> {
     this.patch({ loading: true, error: undefined });
@@ -102,9 +105,11 @@ export class SloopDeviceSession {
       await this.transport.connect();
       this.unsubscribe = this.transport.subscribe((frame) => void this.onPush(frame));
       const info = await this.loadInfo();
+      this.patch({ info });
       const trackState = await this.loadTracks();
-      this.patch({ info, ...trackState, connected: true });
-      await Promise.all([this.loadDescriptors(), this.loadSelectedTrack(), this.loadSamples()]);
+      this.patch({ ...trackState, connected: true });
+      await this.loadDescriptors();
+      await Promise.all([this.loadSelectedTrack(), this.loadSamples()]);
       this.patch({ loading: false });
     } catch (error) {
       await this.transport.disconnect().catch(() => undefined);
@@ -148,7 +153,7 @@ export class SloopDeviceSession {
     const data = [track, step.index, step.notes.length, ...step.notes.slice(0, 4), step.time, step.flags, step.velocity, step.level & 0x7f, (step.level >> 7) & 0x7f, step.ratchet];
     const reply = await this.transport.request(SloopCommand.TrackStep, data);
     const parsed = this.parseTrackStep(reply.data.slice(1));
-    this.patch({ steps: this.state.steps.map((item) => item.index === parsed.index ? parsed : item) });
+    this.patch({ steps: upsertByIndex(this.state.steps, parsed) });
   }
 
   async toggleStep(index: number, note = 60): Promise<void> {
@@ -160,13 +165,13 @@ export class SloopDeviceSession {
   }
 
   async setDrumLane(stepIndex: number, lane: number, enabled: boolean): Promise<void> {
-    const current = this.state.drumSteps.find((x) => x.index === stepIndex) ?? { index: stepIndex, on: Array(16).fill(false), levels: Array(16).fill(100), ratchets: Array(16).fill(0) };
-    const next = { ...current, on: [...current.on] };
+    const current = this.state.drumSteps.find((x) => x.index === stepIndex) ?? { index: stepIndex, on: Array(16).fill(false), levels: Array(16).fill(2), ratchets: Array(16).fill(0) };
+    const next = { ...current, on: [...current.on], levels: [...current.levels], ratchets: [...current.ratchets] };
     next.on[lane] = enabled;
-    const onBytes = packBits(next.on, 3);
-    const levelBytes = pack5(next.levels);
-    const ratchetBytes = pack5(next.ratchets);
-    const reply = await this.transport.request(SloopCommand.DrumStep, [stepIndex, ...onBytes, ...levelBytes, ...ratchetBytes]);
+    const onMask = next.on.reduce((mask, on, index) => on ? mask + 2 ** index : mask, 0);
+    const levelMask = next.levels.reduce((mask, value, index) => next.on[index] ? mask + ((value | 0) & 3) * 4 ** index : mask, 0);
+    const ratchetMask = next.ratchets.reduce((mask, value, index) => next.on[index] ? mask + ((value | 0) & 3) * 4 ** index : mask, 0);
+    const reply = await this.transport.request(SloopCommand.DrumStep, [stepIndex, ...to7BitBytes(onMask, 3), ...to7BitBytes(levelMask, 5), ...to7BitBytes(ratchetMask, 5)]);
     const parsed = this.parseDrumStep(reply.data);
     this.patch({ drumSteps: upsertByIndex(this.state.drumSteps, parsed) });
   }
@@ -193,16 +198,16 @@ export class SloopDeviceSession {
       const reply = await this.transport.request(SloopCommand.SampleInfo);
       let offset = 0;
       const slots = reply.data[offset++] ?? 0;
-      offset++; // slot KiB
+      offset++; // slot capacity KiB
       const sampleSlots: SampleSlotInfo[] = [];
       for (let i = 0; i < slots; i++) {
         const zones = reply.data[offset++] ?? 0;
         const name = readCString(reply.data, offset); offset = name.next;
-        const dataKiB = (reply.data[offset++] ?? 0) | ((reply.data[offset++] ?? 0) << 7);
+        const dataKiB = reply.data[offset++] ?? 0;
         sampleSlots.push({ index: i, zones, name: name.value, dataKiB });
       }
       this.patch({ sampleSlots });
-    } catch { /* older firmware / virtual transport may omit sample info */ }
+    } catch { /* optional on older firmware */ }
   }
 
   private async loadInfo(): Promise<DeviceInfo> {
@@ -271,8 +276,8 @@ export class SloopDeviceSession {
     const dump = (await this.transport.request(SloopCommand.Dump)).data;
     let offset = 2;
     const values: Record<string, number> = { ...this.state.values };
-    for (let id = 0; id < info.parameterCount; id++) { values[valueKey(0, id)] = decodeV14(dump[offset++] ?? 0, dump[offset++] ?? 64); }
-    for (let id = 0; id < info.globalCount; id++) { values[valueKey(1, id)] = decodeV14(dump[offset++] ?? 0, dump[offset++] ?? 64); }
+    for (let id = 0; id < info.parameterCount; id++) values[valueKey(0, id)] = decodeV14(dump[offset++] ?? 0, dump[offset++] ?? 64);
+    for (let id = 0; id < info.globalCount; id++) values[valueKey(1, id)] = decodeV14(dump[offset++] ?? 0, dump[offset++] ?? 64);
     this.patch({ values });
     await this.refreshSequence();
   }
@@ -292,9 +297,12 @@ export class SloopDeviceSession {
 
   private parseDrumStep(data: Uint8Array): DrumStepData {
     const index = data[0] ?? 0;
-    const on = unpackBits(data.slice(1, 4), 16);
-    const levels = unpack5(data.slice(4, 9), 16);
-    const ratchets = unpack5(data.slice(9, 14), 16);
+    const onMask = from7BitBytes(data.slice(1, 4));
+    const levelMask = from7BitBytes(data.slice(4, 9));
+    const ratchetMask = from7BitBytes(data.slice(9, 14));
+    const on = Array.from({ length: 16 }, (_, lane) => !!((onMask >> lane) & 1));
+    const levels = Array.from({ length: 16 }, (_, lane) => Math.floor(levelMask / 4 ** lane) & 3);
+    const ratchets = Array.from({ length: 16 }, (_, lane) => Math.floor(ratchetMask / 4 ** lane) & 3);
     return { index, on, levels, ratchets };
   }
 
@@ -309,7 +317,10 @@ export class SloopDeviceSession {
       const value = decodeV14(lo, hi);
       this.patch({ tracks: this.state.tracks.map((t) => t.index === track ? { ...t, ...(id === 0 ? { level: value } : {}) } : t) });
     } else if (frame.command === SloopCommand.Reload) {
-      await Promise.all([this.loadTracks().then((s) => this.patch(s)), this.loadDescriptors(), this.loadSelectedTrack()]);
+      const tracks = await this.loadTracks();
+      this.patch(tracks);
+      await this.loadDescriptors();
+      await this.loadSelectedTrack();
     } else if (frame.command === SloopCommand.StepChanged) {
       await this.refreshSequence();
     }
@@ -321,21 +332,8 @@ export class SloopDeviceSession {
   }
 }
 
-function upsertByIndex<T extends { index: number }>(items: T[], value: T) {
+function upsertByIndex<T extends { index: number }>(items: T[], value: T): T[] {
   return items.some((x) => x.index === value.index) ? items.map((x) => x.index === value.index ? value : x) : [...items, value];
 }
-
-function packBits(values: boolean[], bytes: number) {
-  const out = Array(bytes).fill(0);
-  values.forEach((value, index) => { if (value) out[index >> 3] |= 1 << (index & 7); });
-  return out.map((x) => x & 0x7f);
-}
-function unpackBits(bytes: Uint8Array, count: number) { return Array.from({ length: count }, (_, i) => !!(bytes[i >> 3] & (1 << (i & 7)))); }
-function pack5(values: number[]) {
-  let bits = 0n; values.slice(0, 16).forEach((v, i) => bits |= BigInt(Math.max(0, Math.min(7, v))) << BigInt(i * 3));
-  return Array.from({ length: 5 }, (_, i) => Number((bits >> BigInt(i * 7)) & 0x7fn));
-}
-function unpack5(bytes: Uint8Array, count: number) {
-  let bits = 0n; bytes.forEach((v, i) => bits |= BigInt(v & 0x7f) << BigInt(i * 7));
-  return Array.from({ length: count }, (_, i) => Number((bits >> BigInt(i * 3)) & 7n));
-}
+function to7BitBytes(value: number, count: number): number[] { return Array.from({ length: count }, (_, k) => Math.floor(value / 2 ** (7 * k)) & 0x7f); }
+function from7BitBytes(bytes: Uint8Array): number { return Array.from(bytes).reduce((value, byte, k) => value + (byte & 0x7f) * 2 ** (7 * k), 0); }
