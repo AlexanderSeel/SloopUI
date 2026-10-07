@@ -6,21 +6,23 @@ SloopUI is a hardware-first studio for the M-VAVE FM-1 running SLOOP firmware, w
 
 ## Current release
 
-### v0.4 — M0–M4 complete
+### v0.6 — M0–M6 complete
 
-M0 through M4 are implemented on `main` and gated by `npm run check` (Vitest protocol/codec tests + TypeScript/Vite production build).
+M0 through M6 are implemented on `main` and gated by `npm run check` (Vitest protocol/codec/browser-boundary tests + TypeScript/Vite production build).
+
+The browser virtual engine is a behavioral SLOOP model, not a bit-exact port of the FM-1 DSP. It mirrors the firmware topology, descriptors, engines, factory names, E0–E7 controls, mixer/effect behavior, samples and project workflow closely enough for offline composition and editing while keeping the hardware firmware as the sonic source of truth.
 
 Hardware boundaries are explicit rather than simulated: editor protocol v5 exposes the track solo mask and record-arm state in replies but no commands to write them, and it does not expose host play/stop transport commands. SloopUI therefore displays those hardware states, edits every writable field, leaves physical transport on the FM-1, and provides play/pause/probability/automation in virtual mode.
 
 ## Architecture
 
 - `protocol/`: byte-exact SLOOP SysEx framing, v14, pack7 and command codecs.
-- `core/`: WebMIDI/virtual transports, session/capability state, live push routing, projects/presets/sample transfer.
-- `audio/`: FM-1 FSMP/IMA-ADPCM codec, resampling, persistent sample library, waveform peak cache and offline processing.
+- `core/`: WebMIDI/virtual transports, session/capability state, live push routing, projects/presets/sample transfer, persistence and diagnostics.
+- `audio/`: Tone.js virtual engine, firmware descriptor model, FM-1 FSMP/IMA-ADPCM codec, resampling, persistent sample library, waveform peak cache and offline processing/bounce.
 - `features/sequencer/`: sequence transforms, MIDI/JSON interchange, probability runtime.
 - `features/projects/`: complete portable four-track SloopUI project capture/restore.
 - `features/effects/`: virtual automation runtime.
-- `ui/components/`: reusable hardware controls, mixer, arranger, sequencer/piano roll, Sample Lab, FX rack and librarians.
+- `ui/components/`: reusable hardware controls, visual scopes, mixer, arranger, sequencer/piano roll, Sample Lab, FX rack, diagnostics and librarians.
 
 The UI depends on `SloopDeviceSession`/`SloopTransport`, never directly on Web MIDI. Hardware and virtual transports use the same session model.
 
@@ -106,25 +108,39 @@ Source of truth: `isod89/sloop-fm1/web/EDITOR_PROTOCOL.md`, `web/editor.html`, `
 - [x] Offline sample processing: gain, DC removal, filter, saturation, delay, reverb, peak/RMS normalization.
 - [x] Offline pitch/time transform and rendered WAV workflow.
 
-## Beyond M4
+### M5 — deeper virtual SLOOP — DONE
+- [x] Full virtual firmware descriptor topology: 58 track parameters, 32 globals and engine-dependent E0–E7 descriptors for all nine standard engines.
+- [x] Exact upstream factory preset names with per-preset virtual envelopes/wave character.
+- [x] Engine-specific behavioral rendering driven from E0–E7: ANALOG/TRIO waveform/filter character, DIGITAL/PHASE character, LOFI/SAMPLE bit-crush/tone/drive, VOICE resonance, WHEEL rotor motion and GRAIN spread/tone behavior.
+- [x] Common track FX are active in the virtual signal path: filter, distortion, chorus, delay and reverb.
+- [x] Imported samples can be mapped as pitched instruments to synth tracks 1–3 with selectable root note.
+- [x] Imported samples can be mapped independently to all 16 drum lanes.
+- [x] Mapped synth/drum samples participate in virtual playback and offline rendering.
+- [x] Full multi-track offline song bounce to WAV for three synth tracks plus drums.
+- [x] Hardware reconciliation view applies firmware-compatible state while preserving virtual-only automation/probability/sample mappings as local data.
+- [x] Scope note: virtual audio is behavioral emulation, not a bit-exact C DSP port; physical FM-1 remains the sound-reference target.
 
-### M5 — deeper virtual SLOOP
-- [ ] Closer emulation of every firmware synth engine and factory preset.
-- [ ] Imported sample/drum-kit playback mapped to virtual tracks.
-- [ ] Full multi-track offline song bounce to WAV.
-- [ ] Hardware reconciliation view for virtual-only project data.
-
-### M6 — production refinement
-- [ ] Dockable/resizable workspace regions and tablet-specific layout pass.
-- [ ] Full keyboard command map and MIDI learn.
-- [ ] Project autosave/recovery and preference persistence.
-- [ ] MIDI/SysEx diagnostics monitor and connection health panel.
-- [ ] Mock-WebMIDI browser E2E tests plus physical FM-1 acceptance checklist.
-- [ ] Formal browser compatibility matrix.
+### M6 — production refinement — DONE
+- [x] Compact tabbed workspace replaces the original scrolling page.
+- [x] Dockable/resizable synth+mixer and sequencer+arranger regions with persistent ratio/orientation/swap state.
+- [x] Tablet-specific responsive layout pass with stacked docks and compact controls.
+- [x] Signal-flow synth layout: FILTER → AMP ENV → LFO/MOD visual/control alignment.
+- [x] Live filter response, ADSR and LFO waveform scopes driven by the same firmware/virtual values as the controls.
+- [x] Pseudo-3D hardware skin with 21-dot LED-ring rotary controls and realistic vertical mixer faders/meters.
+- [x] Dense non-stretching effects rack to remove wasted panel space.
+- [x] Full keyboard command map: transport, workspace switching, track selection, undo dispatch and project open/save.
+- [x] MIDI learn for external CC controllers.
+- [x] Project autosave/recovery, virtual→hardware reconciliation and preference/workspace persistence.
+- [x] MIDI/SysEx diagnostics monitor, raw traffic capture, timeout/error logging and connection health panel.
+- [x] Mock-WebMIDI browser-boundary tests covering SysEx permission, port pairing, INFO/WATCH handshake and request/reply traffic.
+- [x] Physical FM-1 acceptance checklist in `docs/FM1_ACCEPTANCE.md`.
+- [x] Formal browser compatibility matrix in `docs/COMPATIBILITY.md`.
+- [x] Reduced-motion/focus-visible accessibility and responsive control sizing.
 
 ## Acceptance state
 
-- M0–M4 implementation: complete.
-- Automated protocol/unit tests: enabled in CI.
+- M0–M6 implementation: complete.
+- Automated protocol/unit/browser-boundary tests: enabled in CI.
 - TypeScript production build: enabled in CI.
-- Physical FM-1 acceptance: requires an actual connected FM-1 and remains the next real-device validation step; no software-only run can substitute for that hardware check.
+- Latest M5/M6 integration gate: green on `main`.
+- Physical FM-1 acceptance: still requires an actual connected FM-1; no software-only run can validate USB/MIDI electrical behavior, firmware-specific timing or final sonic parity.
