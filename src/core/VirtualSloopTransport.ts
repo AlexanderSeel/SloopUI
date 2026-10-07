@@ -37,7 +37,7 @@ export class VirtualSloopTransport implements SloopTransport{
   switch(command){
    case SloopCommand.Ping:return frame(command,[0]);
    case SloopCommand.Watch:return frame(command,[p[0]??0]);
-   case SloopCommand.Info:return frame(command,[...encodeCString('SLOOP VIRTUAL 4.0'),SLOOP_VIRTUAL_ENGINES.length,TRACK_PARAMETER_COUNT,GLOBAL_DESCRIPTORS.length,64,ENGINE_PARAMETER_START,...SLOOP_VIRTUAL_ENGINES.flatMap(encodeCString),4,5]);
+   case SloopCommand.Info:return frame(command,[...encodeCString('SLOOP VIRTUAL 4.1'),SLOOP_VIRTUAL_ENGINES.length,TRACK_PARAMETER_COUNT,GLOBAL_DESCRIPTORS.length,64,ENGINE_PARAMETER_START,...SLOOP_VIRTUAL_ENGINES.flatMap(encodeCString),4,5]);
    case SloopCommand.Track:return this.trackReply(command,p);
    case SloopCommand.TrackMix:return this.trackMixReply(command,p);
    case SloopCommand.Desc:return this.descReply(command,p);
@@ -63,7 +63,10 @@ export class VirtualSloopTransport implements SloopTransport{
  }
 
  audition(note='C3',duration='8n',track=this.selectedTrack,velocity=.85){this.studio.trigger(track,note,duration,velocity);}
+ async loadTrackSample(track:number,buffer:AudioBuffer,root='C3'){await this.studio.setTrackSample(track,buffer,root);}
+ clearTrackSample(track:number){this.studio.clearTrackSample(track);}
  async loadDrumSample(lane:number,buffer:AudioBuffer){await this.studio.setSample(lane,buffer);}
+ clearDrumSample(lane:number){this.studio.clearSample(lane);}
  triggerDrumSample(lane:number){this.studio.triggerSample(lane);}
  async bounce(events:VirtualBounceEvent[],seconds:number){return this.studio.bounce(events,seconds);}
  async bounceSong(bpm=this.globals[G.BPM]??90,stepCount=64){
@@ -72,7 +75,7 @@ export class VirtualSloopTransport implements SloopTransport{
    const engine=SLOOP_VIRTUAL_ENGINES[this.engines[track]??0]??'ANALOG',preset=this.presets[track]??0;
    for(const s of this.steps[track])for(const note of s.notes)events.push({time:s.index*stepSeconds,track,note:midiToTone(note),duration:stepSeconds*.8,velocity:Math.max(.05,Math.min(1,s.velocity/127)),engine,preset});
   }
-  for(let index=0;index<Math.min(stepCount,this.drums.length);index++){const d=this.drums[index];for(let lane=0;lane<16;lane++)if((d.on>>lane)&1)events.push({time:index*stepSeconds,track:3,note:midiToTone(DRUM_NOTES[lane]),duration:stepSeconds*.3,velocity:.75});}
+  for(let index=0;index<Math.min(stepCount,this.drums.length);index++){const d=this.drums[index];for(let lane=0;lane<16;lane++)if((d.on>>lane)&1)events.push({time:index*stepSeconds,track:3,lane,note:midiToTone(DRUM_NOTES[lane]),duration:stepSeconds*.3,velocity:.75});}
   return this.studio.bounce(events,Math.max(stepSeconds,stepCount*stepSeconds));
  }
 
