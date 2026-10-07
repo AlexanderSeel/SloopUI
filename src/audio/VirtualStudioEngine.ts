@@ -10,6 +10,7 @@ export interface VirtualBounceEvent{time:number;track:number;note:string;duratio
 type TrackSampleSource={buffer:AudioBuffer;root:string};
 
 export class VirtualStudioEngine{
+ private lastAudioStart=0;
  private channels=Array.from({length:4},()=>new Tone.Channel().toDestination());
  private filters=Array.from({length:3},()=>new Tone.Filter(18000,'lowpass'));
  private crushers=Array.from({length:3},()=>new Tone.BitCrusher(12));
@@ -31,6 +32,8 @@ export class VirtualStudioEngine{
  constructor(){for(let i=0;i<3;i++)this.synths[i].chain(this.filters[i],this.crushers[i],this.distortions[i],this.choruses[i],this.tremolos[i],this.delays[i],this.reverbs[i],this.channels[i]);}
  private makeSynth(){return new Tone.PolySynth(Tone.Synth,{oscillator:{type:'sawtooth'},envelope:{attack:.01,decay:.2,sustain:.7,release:.6}});}
  async start(){await Tone.start();await Promise.all(this.reverbs.map(r=>r.generate().catch(()=>undefined)));}
+ async resumeAudio(){await Tone.start();}
+ private nextAudioStart(){const now=Tone.now();this.lastAudioStart=Math.max(now,this.lastAudioStart+.001);return this.lastAudioStart;}
  dispose(){this.synths.forEach(s=>s.dispose());this.trackSamplers.forEach(s=>s.dispose());this.trackSamplers.clear();this.filters.forEach(x=>x.dispose());this.crushers.forEach(x=>x.dispose());this.distortions.forEach(x=>x.dispose());this.choruses.forEach(x=>x.dispose());this.tremolos.forEach(x=>x.dispose());this.delays.forEach(x=>x.dispose());this.reverbs.forEach(x=>x.dispose());this.drum.dispose();this.drumTom.dispose();this.drumNoiseShort.dispose();this.drumNoiseLong.dispose();this.drumMetal.dispose();this.samples.forEach(p=>p.dispose());this.samples.clear();this.channels.forEach(c=>c.dispose());}
  configure(track:number,settings:VirtualTrackSettings){
   const ch=this.channels[track];if(!ch)return;
@@ -49,21 +52,21 @@ export class VirtualStudioEngine{
   delay.wet.value=normalize127(settings.delay??0)*.65;delay.feedback.value=.12+normalize127(settings.delay??0)*.55;
   reverb.wet.value=normalize127(settings.reverb??0)*.7;reverb.decay=.5+normalize127(settings.reverb??0)*5;
  }
- trigger(track:number,note:string,duration='16n',velocity=.8){if(track===3){this.drum.triggerAttackRelease(note,'32n',undefined,velocity);return;}const sampler=this.trackSamplers.get(track);if(sampler)sampler.triggerAttackRelease(note,duration,undefined,velocity);else this.synths[track]?.triggerAttackRelease(note,duration,undefined,velocity);}
+ trigger(track:number,note:string,duration='16n',velocity=.8){const time=this.nextAudioStart();if(track===3){this.drum.triggerAttackRelease(note,'32n',time,velocity);return;}const sampler=this.trackSamplers.get(track);if(sampler)sampler.triggerAttackRelease(note,duration,time,velocity);else this.synths[track]?.triggerAttackRelease(note,duration,time,velocity);}
  async setTrackSample(track:number,buffer:AudioBuffer,root='C3'){if(track<0||track>2)throw new Error('Virtual sample instruments are available on synth tracks 1–3.');this.trackSamplers.get(track)?.dispose();const sampler=new Tone.Sampler({urls:{[root]:buffer}}).chain(this.filters[track],this.crushers[track],this.distortions[track],this.choruses[track],this.tremolos[track],this.delays[track],this.reverbs[track],this.channels[track]);await Tone.loaded();this.trackSamplers.set(track,sampler);this.trackSampleSources.set(track,{buffer,root});}
  clearTrackSample(track:number){this.trackSamplers.get(track)?.dispose();this.trackSamplers.delete(track);this.trackSampleSources.delete(track);}
  async setSample(lane:number,buffer:AudioBuffer){const old=this.samples.get(lane);old?.dispose();const player=new Tone.Player(buffer).connect(this.channels[3]);this.samples.set(lane,player);this.sampleSources.set(lane,buffer);}
  clearSample(lane:number){this.samples.get(lane)?.dispose();this.samples.delete(lane);this.sampleSources.delete(lane);}
- triggerSample(lane:number){const player=this.samples.get(lane);if(!player)return false;player.start();return true;}
+ triggerSample(lane:number){const player=this.samples.get(lane);if(!player)return false;player.start(this.nextAudioStart());return true;}
  triggerDrumLane(lane:number,kit:number,velocity=.8){
-  const c=drumKitCharacter(kit),v=Math.max(.04,Math.min(1,velocity*c.gain));
-  if(lane===0||lane===1){this.drum.triggerAttackRelease(lane===0?c.kick:'A0',lane===1?'4n':'8n',undefined,v);return;}
-  if(lane===9||lane===10||lane===14){const note=lane===9?'G1':lane===10?'C2':'E2';this.drumTom.triggerAttackRelease(note,'16n',undefined,v*.88);return;}
-  if(lane===4||lane===6){this.drumNoiseShort.triggerAttackRelease('32n',undefined,v*c.hat);return;}
-  if(lane===5||lane===11||lane===12){this.drumNoiseLong.triggerAttackRelease(lane===5?'8n':'4n',undefined,v*c.metal);return;}
-  if(lane===15){this.drumMetal.triggerAttackRelease(c.bell,'16n',undefined,v*.7);return;}
-  if(lane===7){this.drumMetal.triggerAttackRelease('C6','32n',undefined,v*.6);return;}
-  this.drumNoiseShort.triggerAttackRelease(lane===3?'16n':'32n',undefined,v*(lane===3?.9:.72));
+  const c=drumKitCharacter(kit),v=Math.max(.04,Math.min(1,velocity*c.gain)),time=this.nextAudioStart();
+  if(lane===0||lane===1){this.drum.triggerAttackRelease(lane===0?c.kick:'A0',lane===1?'4n':'8n',time,v);return;}
+  if(lane===9||lane===10||lane===14){const note=lane===9?'G1':lane===10?'C2':'E2';this.drumTom.triggerAttackRelease(note,'16n',time,v*.88);return;}
+  if(lane===4||lane===6){this.drumNoiseShort.triggerAttackRelease('32n',time,v*c.hat);return;}
+  if(lane===5||lane===11||lane===12){this.drumNoiseLong.triggerAttackRelease(lane===5?'8n':'4n',time,v*c.metal);return;}
+  if(lane===15){this.drumMetal.triggerAttackRelease(c.bell,'16n',time,v*.7);return;}
+  if(lane===7){this.drumMetal.triggerAttackRelease('C6','32n',time,v*.6);return;}
+  this.drumNoiseShort.triggerAttackRelease(lane===3?'16n':'32n',time,v*(lane===3?.9:.72));
  }
  async bounce(events:VirtualBounceEvent[],seconds:number):Promise<AudioBuffer>{
   const trackSources=new Map(this.trackSampleSources),drumSources=new Map(this.sampleSources);

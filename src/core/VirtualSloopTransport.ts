@@ -30,6 +30,7 @@ export class VirtualSloopTransport implements SloopTransport{
  constructor(){this.values[3][IDX.E0]=SLOOP_DEFAULT_DRUM_KIT;this.applyFactoryPatch(0,0,0);this.applyFactoryPatch(1,1,0);this.applyFactoryPatch(2,2,0);}
 
  async connect(){await this.studio.start();this.state='connected';this.syncAll();}
+ async resumeAudio(){await this.studio.resumeAudio();}
  async disconnect(){Tone.Transport.stop();this.studio.dispose();this.studio=new VirtualStudioEngine();this.state='idle';}
  subscribe(listener:(frame:SloopFrame)=>void){this.listeners.add(listener);return()=>this.listeners.delete(listener);}
 
