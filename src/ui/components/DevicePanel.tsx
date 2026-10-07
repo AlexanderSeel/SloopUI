@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { ParameterDescriptor, SessionState, SloopDeviceSession } from '../../core/SloopDeviceSession';
+import { readCString, SloopCommand } from '../../protocol/sloopProtocol';
 import { ParameterControl } from './ParameterControl';
 import { SynthVisualizer, type SynthVisualKind } from './SynthVisualizers';
 
@@ -8,17 +10,25 @@ type GroupName='OSC / SOURCE'|'FILTER'|'AMP ENV'|'LFO / MOD'|'ENV / SHAPE'|'ARP 
 const FEATURED:GroupName[]=['FILTER','AMP ENV','LFO / MOD'];
 
 export function DevicePanel({state,session}:{state:SessionState;session:SloopDeviceSession}){
- const[page,setPage]=useState<'synth'|'global'>('synth');
+ const[page,setPage]=useState<'synth'|'global'>('synth'),[presetNames,setPresetNames]=useState<string[]>([]),[presetBusy,setPresetBusy]=useState(false);
  const parameters=state.descriptors.filter(d=>d.scope===0),globals=state.descriptors.filter(d=>d.scope===1);
- const engine=state.tracks[state.selectedTrack]?.engine??0,title=state.selectedTrack===3?'DRUMS':state.info?.engineNames[engine]??'Device';
+ const track=state.tracks[state.selectedTrack],engine=track?.engine??0,title=state.selectedTrack===3?'DRUMS':state.info?.engineNames[engine]??'Device';
  const groups=useMemo(()=>page==='synth'?groupTrackDescriptors(parameters,state.info?.engineParameterStart??50):groupGlobalDescriptors(globals),[parameters,globals,page,state.info?.engineParameterStart]);
  const featured=page==='synth'&&state.selectedTrack<3?FEATURED.map(name=>groups.find(g=>g.name===name)).filter(Boolean) as {name:GroupName;items:ParameterDescriptor[]}[]:[];
  const rest=groups.filter(g=>!featured.some(f=>f.name===g.name));
+ useEffect(()=>{let alive=true;async function load(){if(state.selectedTrack===3||!track){setPresetNames([]);return;}try{const r=await session.request(SloopCommand.Names,[track.engine]);let offset=1;const count=r.data[offset++]??0,names:string[]=[];for(let i=0;i<count;i++){const item=readCString(r.data,offset);names.push(item.value);offset=item.next;}if(alive)setPresetNames(names);}catch{if(alive)setPresetNames([]);}}void load();return()=>{alive=false;};},[state.selectedTrack,track?.engine,session]);
+ async function chooseEngine(next:number){const eng=state.descriptors.find(d=>d.scope===1&&d.label.toUpperCase()==='ENG');if(!eng)return;setPresetBusy(true);try{await session.setParameter(1,eng.id,next);}finally{setPresetBusy(false);}}
+ async function choosePreset(index:number){if(!track)return;setPresetBusy(true);try{await session.applyFactoryPreset(track.engine,index);}finally{setPresetBusy(false);}}
  return <section className="hardware-panel synth-console rounded-xl p-3">
-  <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-white/8 pb-2">
-   <div><div className="text-[9px] font-black tracking-[.24em] text-emerald-300">SLOOP // FM-1</div><div className="flex items-baseline gap-2"><h2 className="text-base font-semibold">{title}</h2><span className="text-[9px] text-zinc-600">signal-flow editor</span></div></div>
-   <div className="flex flex-wrap items-center gap-1">{state.tracks.map((track,index)=><button key={track.index} onClick={()=>void session.selectTrack(index)} className={`rounded border px-2.5 py-1 text-[10px] font-black ${index===state.selectedTrack?'border-emerald-300/60 bg-emerald-300/15 text-emerald-100':'border-white/10 text-zinc-500'}`}>{TRACK_NAMES[index]}{track.mute?' · M':''}</button>)}<span className="mx-1 h-5 w-px bg-white/10"/><button onClick={()=>setPage('synth')} className={`tool ${page==='synth'?'bg-white/10 text-white':''}`}>SYNTH</button><button onClick={()=>setPage('global')} className={`tool ${page==='global'?'bg-white/10 text-white':''}`}>GLOBAL</button></div>
+  <div className="synth-topbar">
+   <div className="synth-brand"><div className="text-[9px] font-black tracking-[.24em] text-emerald-300">SLOOP // FM-1</div><div className="flex items-baseline gap-2"><h2 className="text-base font-semibold">{title}</h2><span className="text-[9px] text-zinc-600">sound designer</span></div></div>
+   <div className="track-selector">{state.tracks.map((item,index)=><button key={item.index} onClick={()=>void session.selectTrack(index)} className={index===state.selectedTrack?'active':''}>{TRACK_NAMES[index]}{item.mute?' · M':''}</button>)}</div>
+   <div className="page-selector"><button onClick={()=>setPage('synth')} className={page==='synth'?'active':''}>SYNTH</button><button onClick={()=>setPage('global')} className={page==='global'?'active':''}>GLOBAL</button></div>
   </div>
+  {page==='synth'&&state.selectedTrack<3&&<div className="sound-browser">
+   <div className="sound-browser-engine"><span className="sound-browser-label">ENGINE</span><div className="engine-strip">{state.info?.engineNames.map((name,index)=><button disabled={presetBusy} key={name} onClick={()=>void chooseEngine(index)} className={index===engine?'active':''}>{name}</button>)}</div></div>
+   <div className="sound-browser-preset"><span className="sound-browser-label">PRESET</span><button disabled={presetBusy||!presetNames.length} className="preset-arrow" onClick={()=>void choosePreset(Math.max(0,(track?.preset??0)-1))}><ChevronLeft size={13}/></button><select disabled={presetBusy||!presetNames.length} value={Math.min(track?.preset??0,Math.max(0,presetNames.length-1))} onChange={e=>void choosePreset(Number(e.target.value))}>{presetNames.map((name,index)=><option key={`${name}-${index}`} value={index}>{String(index+1).padStart(2,'0')} · {name}</option>)}</select><button disabled={presetBusy||!presetNames.length} className="preset-arrow" onClick={()=>void choosePreset(Math.min(presetNames.length-1,(track?.preset??0)+1))}><ChevronRight size={13}/></button><span className="preset-state">{presetBusy?'LOADING…':presetNames[track?.preset??0]??'EDITED SOUND'}</span></div>
+  </div>}
   {featured.length>0&&<div className="synth-feature-grid">{FEATURED.map(name=>{const group=featured.find(g=>g.name===name);if(!group)return <div key={name}/>;const visual:SynthVisualKind=name==='FILTER'?'filter':name==='AMP ENV'?'adsr':'lfo';return <ControlGroup featured key={name} name={name} descriptors={group.items} state={state} session={session} visual={visual}/>;})}</div>}
   <div className="synth-rack-grid">{rest.map(group=><ControlGroup key={group.name} name={group.name} descriptors={group.items} state={state} session={session}/>)}</div>
  </section>;
