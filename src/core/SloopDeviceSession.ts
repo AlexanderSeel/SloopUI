@@ -133,10 +133,17 @@ export class SloopDeviceSession {
   }
 
   async setParameter(scope: ParamScope, id: number, value: number): Promise<number> {
+    const descriptor = this.state.descriptors.find((item) => item.scope === scope && item.id === id);
     const [lo, hi] = encodeV14(value);
     const reply = await this.transport.request(SloopCommand.Set, [scope, id, lo, hi]);
     const actual = decodeV14(reply.data[2] ?? lo, reply.data[3] ?? hi);
     this.patch({ values: { ...this.state.values, [valueKey(scope, id)]: actual } });
+    if (scope === 1 && descriptor?.label.toUpperCase() === 'ENG') {
+      const tracks = await this.loadTracks();
+      this.patch(tracks);
+      await this.loadDescriptors();
+      await this.loadSelectedTrack();
+    }
     return actual;
   }
 
@@ -198,7 +205,7 @@ export class SloopDeviceSession {
       const reply = await this.transport.request(SloopCommand.SampleInfo);
       let offset = 0;
       const slots = reply.data[offset++] ?? 0;
-      offset++; // slot capacity KiB
+      offset++;
       const sampleSlots: SampleSlotInfo[] = [];
       for (let i = 0; i < slots; i++) {
         const zones = reply.data[offset++] ?? 0;
