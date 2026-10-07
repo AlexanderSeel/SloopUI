@@ -18,4 +18,4 @@ function findDescriptor(state:SessionState,labels:string[]){const upper=labels.m
 function findValue(state:SessionState,labels:string[]){const d=findDescriptor(state,labels);return d?normalizeDescriptor(valueOf(state,d),d):undefined;}
 function valueOf(state:SessionState,d:ParameterDescriptor){return state.values[`0:${d.id}`]??d.defaultValue;}
 function normalizeDescriptor(value:number,d:ParameterDescriptor){return d.max===d.min?0:(value-d.min)/(d.max-d.min);}
-function norm(v:number|undefined){return Math.max(0,Math.min(1,v??0));}function percent(v:number|undefined){return `${Math.round(norm(v)*100)}%`;}function filterValue(v:number|undefined){return norm(v===undefined?.5:v);}
+function norm(v:number|undefined){return Math.max(0,Math.min(1,v??0));}function percent(v:number|undefined){return `${Math.round(norm(v)*100)}%`;}function filterValue(v:number|undefined){return norm(v===undefined ? .5 : v);}
