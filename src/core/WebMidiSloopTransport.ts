@@ -46,7 +46,7 @@ export class WebMidiSloopTransport implements SloopTransport {
       if (!this.input || !this.output) throw new Error('No MIDI input/output pair found. Select the FM-1 ports explicitly and retry.');
       await this.input.open();
       await this.output.open();
-      this.input.onmidimessage = (event) => this.onMessage(new Uint8Array(event.data));
+      this.input.onmidimessage = (event) => { if (event.data) this.onMessage(new Uint8Array(event.data)); };
       this.access.onstatechange = () => {
         if (this.input?.state === 'disconnected' || this.output?.state === 'disconnected') void this.disconnect();
       };
@@ -80,7 +80,8 @@ export class WebMidiSloopTransport implements SloopTransport {
   }
 
   request(command: SloopCommand, data: Iterable<number> = [], timeoutMs = 1200): Promise<SloopFrame> {
-    if (!this.output) return Promise.reject(new Error('MIDI device is not connected.'));
+    const output = this.output;
+    if (!output) return Promise.reject(new Error('MIDI device is not connected.'));
     return new Promise((resolve, reject) => {
       const timer = window.setTimeout(() => {
         const queue = this.pending.get(command) ?? [];
@@ -90,7 +91,7 @@ export class WebMidiSloopTransport implements SloopTransport {
       const queue = this.pending.get(command) ?? [];
       queue.push({ resolve, reject, timer });
       this.pending.set(command, queue);
-      this.output.send(encodeFrame(command, data));
+      output.send(encodeFrame(command, data));
     });
   }
 
