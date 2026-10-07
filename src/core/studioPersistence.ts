@@ -1,9 +1,10 @@
 import type { SessionState } from './SloopDeviceSession';
 
-export interface StudioPreferences { theme:'dark'; compact:boolean; defaultMode:'hardware'|'virtual'; midiInputId?:string; midiOutputId?:string; }
+export type StudioWorkspace='synth'|'sequence'|'samples'|'effects'|'library'|'system';
+export interface StudioPreferences { theme:'dark'; compact:boolean; defaultMode:'hardware'|'virtual'; workspace:StudioWorkspace; midiInputId?:string; midiOutputId?:string; }
 export interface StudioAutosave { version:1; savedAt:string; mode:'hardware'|'virtual'; state:Pick<SessionState,'selectedTrack'|'tracks'|'values'|'steps'|'drumSteps'|'soloMask'>; }
 const PREF_KEY='sloopui.preferences.v1'; const AUTO_KEY='sloopui.autosave.v1';
-export const DEFAULT_PREFERENCES:StudioPreferences={theme:'dark',compact:true,defaultMode:'virtual'};
+export const DEFAULT_PREFERENCES:StudioPreferences={theme:'dark',compact:true,defaultMode:'virtual',workspace:'synth'};
 export function loadPreferences():StudioPreferences{try{return{...DEFAULT_PREFERENCES,...JSON.parse(localStorage.getItem(PREF_KEY)||'{}')}}catch{return DEFAULT_PREFERENCES;}}
 export function savePreferences(value:StudioPreferences){localStorage.setItem(PREF_KEY,JSON.stringify(value));}
 export function saveAutosave(mode:'hardware'|'virtual',state:SessionState){const data:StudioAutosave={version:1,savedAt:new Date().toISOString(),mode,state:{selectedTrack:state.selectedTrack,tracks:state.tracks,values:state.values,steps:state.steps,drumSteps:state.drumSteps,soloMask:state.soloMask}};localStorage.setItem(AUTO_KEY,JSON.stringify(data));return data;}
