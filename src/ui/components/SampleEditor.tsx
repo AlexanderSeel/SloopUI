@@ -4,8 +4,8 @@ import type { SessionState } from '../../core/SloopDeviceSession';
 
 export function SampleEditor({ state }: { state: SessionState }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const sourceRef = useRef<AudioBufferSourceNode>();
-  const contextRef = useRef<AudioContext>();
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const contextRef = useRef<AudioContext | null>(null);
   const [buffer, setBuffer] = useState<AudioBuffer>();
   const [name, setName] = useState('No local sample loaded');
   const [selectionStart, setSelectionStart] = useState(0);
@@ -13,7 +13,7 @@ export function SampleEditor({ state }: { state: SessionState }) {
   const [playing, setPlaying] = useState(false);
 
   useEffect(() => { drawWaveform(canvas.current, buffer, selectionStart, selectionEnd); }, [buffer, selectionStart, selectionEnd]);
-  useEffect(() => () => { sourceRef.current?.stop(); void contextRef.current?.close(); }, []);
+  useEffect(() => () => { try { sourceRef.current?.stop(); } catch { /* already stopped */ } void contextRef.current?.close(); }, []);
 
   async function load(file: File) {
     const context = new AudioContext();
@@ -59,7 +59,7 @@ export function SampleEditor({ state }: { state: SessionState }) {
   async function togglePreview() {
     if (!buffer) return;
     if (playing) {
-      sourceRef.current?.stop();
+      try { sourceRef.current?.stop(); } catch { /* already stopped */ }
       setPlaying(false);
       return;
     }
