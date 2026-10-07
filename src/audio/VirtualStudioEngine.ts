@@ -21,13 +21,17 @@ export class VirtualStudioEngine{
  private synths=[this.makeSynth(),this.makeSynth(),this.makeSynth()];
  private trackSamplers=new Map<number,Tone.Sampler>();
  private trackSampleSources=new Map<number,TrackSampleSource>();
- private drum=new Tone.MembraneSynth().connect(this.channels[3]);
+ private drum=new Tone.MembraneSynth({pitchDecay:.035,octaves:6,envelope:{attack:.001,decay:.38,sustain:0,release:.08}}).connect(this.channels[3]);
+ private drumTom=new Tone.MembraneSynth({pitchDecay:.015,octaves:2,envelope:{attack:.001,decay:.24,sustain:0,release:.05}}).connect(this.channels[3]);
+ private drumNoiseShort=new Tone.NoiseSynth({noise:{type:'white'},envelope:{attack:.001,decay:.09,sustain:0,release:.02}}).connect(this.channels[3]);
+ private drumNoiseLong=new Tone.NoiseSynth({noise:{type:'white'},envelope:{attack:.001,decay:.62,sustain:0,release:.05}}).connect(this.channels[3]);
+ private drumMetal=new Tone.Synth({oscillator:{type:'square'},envelope:{attack:.001,decay:.12,sustain:0,release:.025}}).connect(this.channels[3]);
  private samples=new Map<number,Tone.Player>();
  private sampleSources=new Map<number,AudioBuffer>();
  constructor(){for(let i=0;i<3;i++)this.synths[i].chain(this.filters[i],this.crushers[i],this.distortions[i],this.choruses[i],this.tremolos[i],this.delays[i],this.reverbs[i],this.channels[i]);}
  private makeSynth(){return new Tone.PolySynth(Tone.Synth,{oscillator:{type:'sawtooth'},envelope:{attack:.01,decay:.2,sustain:.7,release:.6}});}
  async start(){await Tone.start();await Promise.all(this.reverbs.map(r=>r.generate().catch(()=>undefined)));}
- dispose(){this.synths.forEach(s=>s.dispose());this.trackSamplers.forEach(s=>s.dispose());this.trackSamplers.clear();this.filters.forEach(x=>x.dispose());this.crushers.forEach(x=>x.dispose());this.distortions.forEach(x=>x.dispose());this.choruses.forEach(x=>x.dispose());this.tremolos.forEach(x=>x.dispose());this.delays.forEach(x=>x.dispose());this.reverbs.forEach(x=>x.dispose());this.drum.dispose();this.samples.forEach(p=>p.dispose());this.samples.clear();this.channels.forEach(c=>c.dispose());}
+ dispose(){this.synths.forEach(s=>s.dispose());this.trackSamplers.forEach(s=>s.dispose());this.trackSamplers.clear();this.filters.forEach(x=>x.dispose());this.crushers.forEach(x=>x.dispose());this.distortions.forEach(x=>x.dispose());this.choruses.forEach(x=>x.dispose());this.tremolos.forEach(x=>x.dispose());this.delays.forEach(x=>x.dispose());this.reverbs.forEach(x=>x.dispose());this.drum.dispose();this.drumTom.dispose();this.drumNoiseShort.dispose();this.drumNoiseLong.dispose();this.drumMetal.dispose();this.samples.forEach(p=>p.dispose());this.samples.clear();this.channels.forEach(c=>c.dispose());}
  configure(track:number,settings:VirtualTrackSettings){
   const ch=this.channels[track];if(!ch)return;
   ch.volume.value=settings.mute?-Infinity:Tone.gainToDb(Math.max(.0001,settings.level/127));
@@ -50,7 +54,17 @@ export class VirtualStudioEngine{
  clearTrackSample(track:number){this.trackSamplers.get(track)?.dispose();this.trackSamplers.delete(track);this.trackSampleSources.delete(track);}
  async setSample(lane:number,buffer:AudioBuffer){const old=this.samples.get(lane);old?.dispose();const player=new Tone.Player(buffer).connect(this.channels[3]);this.samples.set(lane,player);this.sampleSources.set(lane,buffer);}
  clearSample(lane:number){this.samples.get(lane)?.dispose();this.samples.delete(lane);this.sampleSources.delete(lane);}
- triggerSample(lane:number){this.samples.get(lane)?.start();}
+ triggerSample(lane:number){const player=this.samples.get(lane);if(!player)return false;player.start();return true;}
+ triggerDrumLane(lane:number,kit:number,velocity=.8){
+  const c=drumKitCharacter(kit),v=Math.max(.04,Math.min(1,velocity*c.gain));
+  if(lane===0||lane===1){this.drum.triggerAttackRelease(lane===0?c.kick:'A0',lane===1?'4n':'8n',undefined,v);return;}
+  if(lane===9||lane===10||lane===14){const note=lane===9?'G1':lane===10?'C2':'E2';this.drumTom.triggerAttackRelease(note,'16n',undefined,v*.88);return;}
+  if(lane===4||lane===6){this.drumNoiseShort.triggerAttackRelease('32n',undefined,v*c.hat);return;}
+  if(lane===5||lane===11||lane===12){this.drumNoiseLong.triggerAttackRelease(lane===5?'8n':'4n',undefined,v*c.metal);return;}
+  if(lane===15){this.drumMetal.triggerAttackRelease(c.bell,'16n',undefined,v*.7);return;}
+  if(lane===7){this.drumMetal.triggerAttackRelease('C6','32n',undefined,v*.6);return;}
+  this.drumNoiseShort.triggerAttackRelease(lane===3?'16n':'32n',undefined,v*(lane===3?.9:.72));
+ }
  async bounce(events:VirtualBounceEvent[],seconds:number):Promise<AudioBuffer>{
   const trackSources=new Map(this.trackSampleSources),drumSources=new Map(this.sampleSources);
   const rendered=await Tone.Offline(({transport})=>{
@@ -66,6 +80,10 @@ export class VirtualStudioEngine{
 }
 
 type Wave='sine'|'square'|'sawtooth'|'triangle';
+function drumKitCharacter(kit:number){
+ const k=Math.max(0,Math.min(36,kit));let gain=1,hat=.72,metal=.72,kick='C1',bell='A5';
+ if(k===1){kick='A0';hat=.55;metal=.58;}else if(k===2){kick='D1';gain=1.08;hat=.82;}else if(k===3){kick='D1';hat=.95;metal=.95;}else if(k===4||k===13){gain=.82;hat=.55;metal=.52;}else if(k===5){kick='C1';gain=1.04;hat=.72;}else if(k===6||k===15||k===17){kick='D1';gain=1.12;hat=.9;metal=.92;}else if([10,11,14,22,23].includes(k)){kick='C1';gain=1.12;hat=.86;}else if([25,26,27,28].includes(k)){kick='B0';gain=1.03;hat=.72;}else if([30,31,32].includes(k)){gain=.85;hat=.62;bell='C6';}else if(k===35){gain=.65;hat=.45;metal=.55;}return{gain,hat,metal,kick,bell};
+}
 function engineCharacter(engine:SloopVirtualEngine,p:number[],fallbackWave:Wave,fallbackDetune:number){
  let wave=fallbackWave,detune=fallbackDetune,cutoff: number|undefined,resonance:number|undefined,drive=0,chorus=0,bits=16,crushWet=0,tremoloRate=5,tremoloDepth=0,filterType:'lowpass'|'bandpass'|'highpass'='lowpass';
  if(engine==='ANALOG'){wave=waveFromIndex(p[0],['sawtooth','square','triangle','sine','square']);detune=(p[1]??0)/4;cutoff=normalize127(p[4]??90);resonance=normalize127(p[5]??30);drive=normalize127(p[6]??0);}
