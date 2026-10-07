@@ -1,11 +1,11 @@
 import * as Tone from 'tone';
 import { VirtualStudioEngine, type VirtualBounceEvent } from '../audio/VirtualStudioEngine';
 import { ENGINE_PARAMETER_START, GLOBAL_DESCRIPTORS, TRACK_COMMON, TRACK_PARAMETER_COUNT, engineDescriptors, type VirtualDescriptor } from '../audio/virtualFirmwareDescriptors';
-import { SLOOP_FACTORY_PRESETS, SLOOP_VIRTUAL_ENGINES, type SloopVirtualEngine } from '../audio/virtualProfiles';
+import { factoryPatch } from '../audio/virtualFactoryPatches';
+import { SLOOP_DEFAULT_DRUM_KIT, SLOOP_DRUM_KITS, SLOOP_DRUM_NOTES, SLOOP_FACTORY_PRESETS, SLOOP_VIRTUAL_ENGINES, type SloopVirtualEngine } from '../audio/virtualProfiles';
 import { encodeCString, encodeV14, readCString, SloopCommand, type SloopFrame } from '../protocol/sloopProtocol';
 import type { ConnectionState, SloopTransport } from './WebMidiSloopTransport';
 
-const DRUM_NOTES=[36,38,42,46,41,43,45,49,51,39,37,54,56,75,81,82];
 const IDX={LVL:0,ATK:1,DEC:2,SUS:3,REL:4,ED_FLT:5,DST:33,CHO:34,DLY:35,REV:36,PAN:39,MUTE:40,E0:ENGINE_PARAMETER_START} as const;
 const G={BPM:0,ENG:20} as const;
 interface VirtualPreset{used:boolean;engine:number;preset:number;name:string;values:number[]}
@@ -27,6 +27,7 @@ export class VirtualSloopTransport implements SloopTransport{
  private projects:Array<VirtualProject|undefined>=Array(4).fill(undefined);
  private user=Array.from({length:32},(_,slot):VirtualPreset=>({used:slot<3,engine:slot%3,preset:0,name:slot<3?`VIRTUAL ${slot+1}`:'',values:[...this.values[0]]}));
  private samples=[{zones:1,name:'KICK',kib:12},{zones:0,name:'',kib:0},{zones:0,name:'',kib:0}];
+ constructor(){this.values[3][IDX.E0]=SLOOP_DEFAULT_DRUM_KIT;this.applyFactoryPatch(0,0,0);this.applyFactoryPatch(1,1,0);this.applyFactoryPatch(2,2,0);}
 
  async connect(){await this.studio.start();this.state='connected';this.syncAll();}
  async disconnect(){Tone.Transport.stop();this.studio.dispose();this.studio=new VirtualStudioEngine();this.state='idle';}
@@ -37,7 +38,7 @@ export class VirtualSloopTransport implements SloopTransport{
   switch(command){
    case SloopCommand.Ping:return frame(command,[0]);
    case SloopCommand.Watch:return frame(command,[p[0]??0]);
-   case SloopCommand.Info:return frame(command,[...encodeCString('SLOOP VIRTUAL 4.1'),SLOOP_VIRTUAL_ENGINES.length,TRACK_PARAMETER_COUNT,GLOBAL_DESCRIPTORS.length,64,ENGINE_PARAMETER_START,...SLOOP_VIRTUAL_ENGINES.flatMap(encodeCString),4,5]);
+   case SloopCommand.Info:return frame(command,[...encodeCString('SLOOP VIRTUAL 4.2'),SLOOP_VIRTUAL_ENGINES.length,TRACK_PARAMETER_COUNT,GLOBAL_DESCRIPTORS.length,64,ENGINE_PARAMETER_START,...SLOOP_VIRTUAL_ENGINES.flatMap(encodeCString),4,5]);
    case SloopCommand.Track:return this.trackReply(command,p);
    case SloopCommand.TrackMix:return this.trackMixReply(command,p);
    case SloopCommand.Desc:return this.descReply(command,p);
@@ -67,7 +68,7 @@ export class VirtualSloopTransport implements SloopTransport{
  clearTrackSample(track:number){this.studio.clearTrackSample(track);}
  async loadDrumSample(lane:number,buffer:AudioBuffer){await this.studio.setSample(lane,buffer);}
  clearDrumSample(lane:number){this.studio.clearSample(lane);}
- triggerDrumSample(lane:number){this.studio.triggerSample(lane);}
+ triggerDrumSample(lane:number,velocity=.8){if(!this.studio.triggerSample(lane))this.studio.triggerDrumLane(lane,this.values[3][IDX.E0]??SLOOP_DEFAULT_DRUM_KIT,velocity);}
  async bounce(events:VirtualBounceEvent[],seconds:number){return this.studio.bounce(events,seconds);}
  async bounceSong(bpm=this.globals[G.BPM]??90,stepCount=64){
   const stepSeconds=60/Math.max(20,bpm)/4,events:VirtualBounceEvent[]=[];
@@ -75,27 +76,29 @@ export class VirtualSloopTransport implements SloopTransport{
    const engine=SLOOP_VIRTUAL_ENGINES[this.engines[track]??0]??'ANALOG',preset=this.presets[track]??0;
    for(const s of this.steps[track])for(const note of s.notes)events.push({time:s.index*stepSeconds,track,note:midiToTone(note),duration:stepSeconds*.8,velocity:Math.max(.05,Math.min(1,s.velocity/127)),engine,preset});
   }
-  for(let index=0;index<Math.min(stepCount,this.drums.length);index++){const d=this.drums[index];for(let lane=0;lane<16;lane++)if((d.on>>lane)&1)events.push({time:index*stepSeconds,track:3,lane,note:midiToTone(DRUM_NOTES[lane]),duration:stepSeconds*.3,velocity:.75});}
+  for(let index=0;index<Math.min(stepCount,this.drums.length);index++){const d=this.drums[index];for(let lane=0;lane<16;lane++)if((d.on>>lane)&1)events.push({time:index*stepSeconds,track:3,lane,note:midiToTone(SLOOP_DRUM_NOTES[lane]),duration:stepSeconds*.3,velocity:.75});}
   return this.studio.bounce(events,Math.max(stepSeconds,stepCount*stepSeconds));
  }
 
  private trackReply(command:SloopCommand,p:Uint8Array){if(p.length)this.selectedTrack=Math.min(3,p[0]);const tracks=Array.from({length:4},(_,i)=>[this.trackEngine(i),this.presets[i]??0,...encodeV14(this.values[i][IDX.LVL]??104),this.values[i][IDX.MUTE]?1:0,0]).flat();return frame(command,[this.selectedTrack,4,...tracks,0]);}
  private trackMixReply(command:SloopCommand,p:Uint8Array){const track=Math.min(3,p[0]??0);if(p.length>=4){this.values[track][IDX.LVL]=clamp(decodeRaw(p[1],p[2]),0,127);this.values[track][IDX.MUTE]=p[3]?1:0;this.syncTrack(track);}return frame(command,[track,...encodeV14(this.values[track][IDX.LVL]),this.values[track][IDX.MUTE]?1:0]);}
- private descReply(command:SloopCommand,p:Uint8Array){const scope=(p[0]??0) as 0|1,id=p[1]??0;let descriptor:VirtualDescriptor|undefined;if(scope===1)descriptor=GLOBAL_DESCRIPTORS[id];else if(id<ENGINE_PARAMETER_START)descriptor=TRACK_COMMON[id];else if(this.selectedTrack===3&&id===ENGINE_PARAMETER_START)descriptor={label:'KIT',format:8,min:0,max:3,defaultValue:0,unit:'',enumValues:['GM KIT','USR1','USR2','USR3']};else descriptor=engineDescriptors(this.engineName(this.selectedTrack))[id-ENGINE_PARAMETER_START];descriptor??={label:`${scope?'G':'P'}${id}`,format:0,min:0,max:0,defaultValue:0,unit:'',enumValues:[]};return frame(command,[scope,id,descriptor.format,...encodeV14(descriptor.min),...encodeV14(descriptor.max),...encodeV14(descriptor.defaultValue),...encodeCString(descriptor.label),...encodeCString(descriptor.unit),...descriptor.enumValues.flatMap(encodeCString)]);}
+ private drumKitDescriptor():VirtualDescriptor{return{label:'KIT',format:8,min:0,max:SLOOP_DRUM_KITS.length-1,defaultValue:SLOOP_DEFAULT_DRUM_KIT,unit:'',enumValues:[...SLOOP_DRUM_KITS]};}
+ private descReply(command:SloopCommand,p:Uint8Array){const scope=(p[0]??0) as 0|1,id=p[1]??0;let descriptor:VirtualDescriptor|undefined;if(scope===1)descriptor=GLOBAL_DESCRIPTORS[id];else if(id<ENGINE_PARAMETER_START)descriptor=TRACK_COMMON[id];else if(this.selectedTrack===3&&id===ENGINE_PARAMETER_START)descriptor=this.drumKitDescriptor();else descriptor=engineDescriptors(this.engineName(this.selectedTrack))[id-ENGINE_PARAMETER_START];descriptor??={label:`${scope?'G':'P'}${id}`,format:0,min:0,max:0,defaultValue:0,unit:'',enumValues:[]};return frame(command,[scope,id,descriptor.format,...encodeV14(descriptor.min),...encodeV14(descriptor.max),...encodeV14(descriptor.defaultValue),...encodeCString(descriptor.label),...encodeCString(descriptor.unit),...descriptor.enumValues.flatMap(encodeCString)]);}
  private setReply(command:SloopCommand,p:Uint8Array){const scope=(p[0]??0) as 0|1,id=p[1]??0,descriptor=scope===1?GLOBAL_DESCRIPTORS[id]:this.descriptorForTrack(this.selectedTrack,id),raw=clamp(decodeRaw(p[2],p[3]),descriptor?.min??-8192,descriptor?.max??8191);if(scope===1){this.globals[id]=raw;if(id===G.BPM)Tone.Transport.bpm.value=raw;if(id===G.ENG&&this.selectedTrack<3)this.switchEngine(this.selectedTrack,raw);}else this.values[this.selectedTrack][id]=raw;this.syncTrack(this.selectedTrack);return frame(command,[scope,id,...encodeV14(raw)]);}
  private trackParamReply(command:SloopCommand,p:Uint8Array){const track=Math.min(3,p[0]??0),id=p[1]??0,descriptor=this.descriptorForTrack(track,id);if(p.length>=4)this.values[track][id]=clamp(decodeRaw(p[2],p[3]),descriptor?.min??-8192,descriptor?.max??8191);this.syncTrack(track);return frame(command,[track,id,...encodeV14(this.values[track][id]??0)]);}
  private trackStepReply(command:SloopCommand,p:Uint8Array){const track=Math.min(3,p[0]??0),index=Math.min(63,p[1]??0);if(p.length>2){const count=Math.min(4,p[2]??0);let offset=3;const notes=Array.from(p.slice(offset,offset+count));offset+=count;this.steps[track][index]={index,notes,time:p[offset++]??2,flags:p[offset++]??0,velocity:p[offset++]??100,level:(p[offset++]??100)|((p[offset++]??0)<<7),ratchet:p[offset++]??0};}const s=this.steps[track][index];return frame(command,[track,index,s.notes.length,...s.notes,s.time,s.flags,s.velocity,s.level&0x7f,(s.level>>7)&0x7f,s.ratchet]);}
  private drumStepReply(command:SloopCommand,p:Uint8Array){const index=Math.min(63,p[0]??0);if(p.length>=14)this.drums[index]={on:from7(p.slice(1,4)),levels:from7(p.slice(4,9)),ratchets:from7(p.slice(9,14))};const d=this.drums[index];return frame(command,[index,...to7(d.on,3),...to7(d.levels,5),...to7(d.ratchets,5)]);}
  private namesReply(command:SloopCommand,p:Uint8Array){const engine=clamp(p[0]??0,0,SLOOP_VIRTUAL_ENGINES.length-1),name=SLOOP_VIRTUAL_ENGINES[engine],names=SLOOP_FACTORY_PRESETS[name];return frame(command,[engine,names.length,...names.flatMap(encodeCString),...encodeCString('EDIT 1'),...encodeCString('EDIT 2')]);}
  private projectReply(command:SloopCommand,p:Uint8Array){const op=p[0]??2,slot=clamp(p[1]??0,0,3);if(op===1)this.projects[slot]=this.captureProject();else if(op===0&&this.projects[slot])this.restoreProject(this.projects[slot]!);return frame(command,[op,slot,this.projects[slot]?1:0,0]);}
- private userListReply(command:SloopCommand,p:Uint8Array){const start=clamp(p[0]??0,0,31),count=Math.min(p[1]??16,16,32-start),items:number[]=[];for(let i=0;i<count;i++){const u=this.user[start+i];items.push(u.used?1:0,u.engine,...encodeCString(u.used?u.name:''));}return frame(command,[start,count,32,...items]);}
+ private userListReply(command:SloopCommand,p:Uint8Array){const start=clamp(p[0]??0,0,31),count=Math.min(p[1]??16,16,32-start),items:number[]=[];for(let i=0;i<count;i++){const u=this.user[start+i];items.push(u.used?1:0,u.engine,...encodeCString(u.used?u.name:'') );}return frame(command,[start,count,32,...items]);}
  private userStoreReply(command:SloopCommand,p:Uint8Array){const slot=clamp(p[0]??0,0,31),name=readCString(p,1).value||`VIRTUAL ${slot+1}`;this.user[slot]={used:true,engine:this.engines[this.selectedTrack]??0,preset:this.presets[this.selectedTrack]??0,name,values:[...this.values[this.selectedTrack]]};return frame(command,[slot,0]);}
  private userLoadReply(command:SloopCommand,p:Uint8Array){const slot=clamp(p[0]??0,0,31),u=this.user[slot];if(!u?.used)return frame(command,[slot,1]);this.engines[this.selectedTrack]=u.engine;this.presets[this.selectedTrack]=u.preset;this.values[this.selectedTrack]=[...u.values];this.syncTrack(this.selectedTrack);return frame(command,[slot,0]);}
  private userEraseReply(command:SloopCommand,p:Uint8Array){const slot=clamp(p[0]??0,0,31);this.user[slot]={used:false,engine:0,preset:0,name:'',values:this.defaultTrack(0)};return frame(command,[slot,0]);}
- private presetReply(command:SloopCommand,p:Uint8Array){const engine=clamp(p[0]??0,0,SLOOP_VIRTUAL_ENGINES.length-1),preset=clamp(p[1]??0,0,SLOOP_FACTORY_PRESETS[SLOOP_VIRTUAL_ENGINES[engine]].length-1);this.switchEngine(this.selectedTrack,engine);this.presets[this.selectedTrack]=preset;this.syncTrack(this.selectedTrack);return frame(command,[engine,preset]);}
+ private presetReply(command:SloopCommand,p:Uint8Array){const engine=clamp(p[0]??0,0,SLOOP_VIRTUAL_ENGINES.length-1),preset=clamp(p[1]??0,0,SLOOP_FACTORY_PRESETS[SLOOP_VIRTUAL_ENGINES[engine]].length-1);this.applyFactoryPatch(this.selectedTrack,engine,preset);this.syncTrack(this.selectedTrack);return frame(command,[engine,preset]);}
 
+ private applyFactoryPatch(track:number,engine:number,preset:number){if(track>=3)return;const old=this.values[track],name=SLOOP_VIRTUAL_ENGINES[clamp(engine,0,SLOOP_VIRTUAL_ENGINES.length-1)],next=this.defaultTrack(engine),patch=factoryPatch(name,preset);next[IDX.LVL]=old?.[IDX.LVL]??next[IDX.LVL];next[IDX.PAN]=old?.[IDX.PAN]??next[IDX.PAN];next[IDX.MUTE]=old?.[IDX.MUTE]??next[IDX.MUTE];if(patch){next[IDX.ATK]=patch.adsr[0];next[IDX.DEC]=patch.adsr[1];next[IDX.SUS]=patch.adsr[2];next[IDX.REL]=patch.adsr[3];next[IDX.DST]=patch.fx[0];next[IDX.CHO]=patch.fx[1];next[IDX.DLY]=patch.fx[2];next[IDX.REV]=patch.fx[3];for(let i=0;i<8;i++)next[IDX.E0+i]=patch.engineParams[i]??next[IDX.E0+i];}this.engines[track]=engine;this.presets[track]=preset;this.values[track]=next;this.globals[G.ENG]=engine;}
  private switchEngine(track:number,engine:number){if(track>=3)return;this.engines[track]=clamp(engine,0,SLOOP_VIRTUAL_ENGINES.length-1);this.presets[track]=0;const old=this.values[track],next=this.defaultTrack(this.engines[track]);for(let i=0;i<ENGINE_PARAMETER_START;i++)next[i]=old[i]??next[i];this.values[track]=next;this.globals[G.ENG]=this.engines[track];}
- private descriptorForTrack(track:number,id:number){if(id<ENGINE_PARAMETER_START)return TRACK_COMMON[id];if(track===3&&id===ENGINE_PARAMETER_START)return undefined;return engineDescriptors(this.engineName(track))[id-ENGINE_PARAMETER_START];}
+ private descriptorForTrack(track:number,id:number){if(id<ENGINE_PARAMETER_START)return TRACK_COMMON[id];if(track===3&&id===ENGINE_PARAMETER_START)return this.drumKitDescriptor();if(track===3)return undefined;return engineDescriptors(this.engineName(track))[id-ENGINE_PARAMETER_START];}
  private defaultTrack(engine:number){return [...TRACK_COMMON.map(d=>d.defaultValue),...engineDescriptors(SLOOP_VIRTUAL_ENGINES[clamp(engine,0,SLOOP_VIRTUAL_ENGINES.length-1)]).map(d=>d.defaultValue)];}
  private trackEngine(track:number){return track===3?SLOOP_VIRTUAL_ENGINES.length:(this.engines[track]??0);}
  private engineName(track:number):SloopVirtualEngine{return SLOOP_VIRTUAL_ENGINES[this.engines[track]??0]??'ANALOG';}
