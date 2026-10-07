@@ -4,6 +4,33 @@
 
 SloopUI is a hardware-first studio for the M-VAVE FM-1 running SLOOP firmware, with a virtual Tone.js/Web Audio mode for composing and editing without a connected pedal. The UX target is a compact hardware workstation: tactile panels, dense information, clear signal flow, DAW-grade editing where appropriate, and no generic admin-dashboard styling.
 
+## Current release
+
+### v0.1 — first usable studio
+
+The first usable milestone is now implemented and production-build verified on `main`.
+
+Usable now:
+- Direct FM-1 Web MIDI/SysEx connection, explicit input/output selection and auto-detection.
+- INFO negotiation, protocol version/capability parsing, WATCH 3 and PING live-sync lifecycle.
+- Descriptor-driven hardware editor for selected-track and global parameters.
+- Automatic descriptor/state reload after engine changes through global `ENG`.
+- Four-track selection and live parameter synchronization from firmware push frames.
+- Synth sequence editing across the complete firmware step count with note insertion, velocity, level, ratchet, accent and slide.
+- Drum editor with 16 lanes and banked access to the complete firmware step count.
+- Tone.js virtual mode using the same session/protocol abstraction, including pattern playback and audition.
+- Sample Lab: browser audio decode, waveform, selection, preview, crop/trim, fades, normalize, reverse and WAV export.
+- Hardware sample-slot discovery through `SMP_INFO`.
+- GitHub Actions production build verification.
+
+Still intentionally post-v0.1:
+- Upload edited samples to FM-1 (`SMP_BEGIN/WRITE/END`) with the exact FSMP/IMA-ADPCM encoder.
+- Full mixer/solo/arm UI, user-preset/project management and factory preset browser.
+- Piano roll/arranger, copy/paste/transform/quantization history and project/MIDI import-export.
+- Advanced sample zone/loop editing, time-stretch/pitch shifting and transient/zero-crossing tools.
+- Dedicated effects/routing panels, virtual automation and offline bounce.
+- Hardware acceptance testing against a physical FM-1; CI verifies compilation/build, not the electrical/device connection.
+
 ## Architecture
 
 ### Layers
@@ -32,65 +59,75 @@ Source of truth: `isod89/sloop-fm1/web/EDITOR_PROTOCOL.md` and `firmware/src/edi
 
 ## Milestones
 
-### M0 — foundation (in progress)
+### M0 — foundation
 - [x] React + TypeScript + Vite + Tailwind base.
 - [x] Compact hardware-inspired studio shell.
 - [x] Protocol command enum, framing, v14 codec and pack7.
 - [x] Direct Web MIDI transport requesting SysEx.
 - [x] INFO probe before declaring hardware connection successful.
 - [x] WATCH 3 + 1 s PING keepalive.
-- [x] Transport abstraction and initial Tone.js virtual transport.
-- [ ] Parse INFO fully and expose negotiated protocol/device capabilities.
-- [ ] Robust MIDI port pairing/reconnect UI and explicit port selector.
+- [x] Transport abstraction and Tone.js virtual transport.
+- [x] Parse INFO fully and expose negotiated protocol/device capabilities.
+- [x] Robust MIDI port pairing/reconnect behavior and explicit port selector.
 - [ ] Unit tests against firmware reference vectors.
 
 ### M1 — live device editor
-- [ ] Device session/state store populated by INFO/DUMP/DESC/TRACK/TRACK_DUMP.
-- [ ] Dynamic parameter descriptors and enum labels.
-- [ ] Hardware-style knob/fader/toggle/select components with keyboard fine-adjust and reset.
-- [ ] Engine pages and global page generated from descriptors.
+- [x] Device session/state store populated by INFO/DUMP/DESC/TRACK.
+- [x] Dynamic parameter descriptors and enum labels.
+- [x] Hardware-style knob/range/toggle/select controls.
+- [x] Engine/global pages generated from descriptors.
 - [ ] 4-channel mixer: level, pan, mute, solo mask, armed state.
-- [ ] Bidirectional live sync from CHANGED/RELOAD/STEP_CHANGED/TRACK_CHANGED.
-- [ ] Optimistic writes with clamped reply reconciliation and throttled continuous controls.
+- [x] Bidirectional live sync from CHANGED/RELOAD/STEP_CHANGED/TRACK_CHANGED.
+- [x] Clamped reply reconciliation for parameter writes.
+- [ ] Throttled continuous controls for very dense hardware edits.
 - [ ] Factory/user preset browser; store/load/erase; project slots.
 
 ### M2 — DAW sequencer
-- [ ] Global transport, BPM, position, loop range, metronome and count-in where supported/virtualized.
-- [ ] 4 track lanes with zoomable ruler and bar/beat/grid snapping.
-- [ ] Synth step editor: up to 4 notes/step, note/tie/rest, accent, slide, velocity, v5 level + ratchet.
-- [ ] Drum editor: 16 lanes, on/off, per-hit level and ratchet.
-- [ ] Piano roll, step grid and compact hardware-step views backed by the same model.
-- [ ] Copy/paste, duplicate, clear, rotate, reverse, humanize, probability/variation (virtual-only where firmware cannot represent it).
+- [x] Virtual transport playback with BPM-aware playhead.
+- [x] Synth step editor: note/rest, accent, slide, velocity, v5 level + ratchet.
+- [x] Drum editor: 16 lanes, on/off and complete step-count banking.
+- [ ] Up to 4 chord notes per synth step editor UI.
+- [ ] Global hardware transport controls where firmware exposes/accepts them.
+- [ ] 4 track arranger lanes with zoomable ruler and bar/beat/grid snapping.
+- [ ] Piano roll and compact hardware-step views backed by the same model.
+- [ ] Copy/paste, duplicate, clear, rotate, reverse, humanize, probability/variation.
 - [ ] Quantize strength, swing-aware snapping and non-destructive edit history.
 - [ ] Import/export SloopUI project JSON and MIDI where representable.
 
 ### M3 — sample laboratory
-- [ ] Drag/drop WAV/AIFF/MP3/FLAC decode through browser APIs/decoder adapters.
-- [ ] Multi-resolution waveform cache and zoom/pan/scrub selection.
-- [ ] Trim/crop, silence, gain, normalize peak/RMS, fades, reverse, DC removal.
-- [ ] Time-stretch/pitch-shift/transposition pipeline with preview; preserve original source.
+- [x] Browser audio decode for common formats supported by the browser.
+- [x] Waveform display and selectable edit region.
+- [x] Trim/crop, normalize, fades and reverse.
+- [x] Selection preview and edited WAV export.
+- [x] SMP_INFO hardware slot browser.
+- [ ] Multi-resolution waveform cache and zoom/pan/scrub.
+- [ ] Silence/gain/RMS normalize/DC removal.
+- [ ] Time-stretch/pitch-shift/transposition pipeline with preview.
 - [ ] Quantized selection boundaries, transient/onset assistance and zero-crossing snap.
 - [ ] Resample/downmix and FM-1 memory-size estimator.
 - [ ] Up to 16 key zones with root/low/high note, loop start/end, loop enable, audition.
 - [ ] IMA ADPCM encoder + loop predictor/step-index calculation, FSMP header, CRC32.
-- [ ] SMP_INFO slot browser and safe BEGIN/WRITE/END uploader with progress/retry/error decode.
+- [ ] Safe BEGIN/WRITE/END uploader with progress/retry/error decode.
 - [ ] Local library via IndexedDB/OPFS.
 
 ### M4 — effects + modulation editor
-- [ ] Discover effect/global parameters from DESC and group semantically.
-- [ ] Hardware-rack panels for sends, slicer, filter/roll/duck/dust and firmware-exposed processing.
+- [x] Firmware effect/global parameters are available through descriptor-generated controls.
+- [ ] Semantic grouping and dedicated hardware-rack panels for sends, slicer, filter/roll/duck/dust.
 - [ ] Modulation/automation lanes in virtual mode; clear indication when a feature is not firmware-representable.
 - [ ] Offline sample effect chain: filter/EQ, dynamics, distortion/saturation, delay/reverb render, normalize at output.
 
 ### M5 — virtual SLOOP
-- [ ] Tone.js engine abstraction matching SLOOP tracks/patterns/mixer as closely as practical.
-- [ ] Virtual synth engines/presets mapped to common descriptor model.
-- [ ] Sample/drum playback and effects.
-- [ ] Same sequencer/sample editor works with hardware or virtual transport.
+- [x] Tone.js transport abstraction using the same SLOOP session model.
+- [x] Virtual tracks, descriptors, parameter editing and basic synth audition.
+- [x] Virtual sequence playback for synth/drum patterns.
+- [x] Same sequencer/sample editor shell works in hardware or virtual mode.
+- [ ] Closer virtual approximations of all SLOOP synth engines/presets.
+- [ ] Sample/drum kit playback mapped to imported content.
 - [ ] Offline render/bounce to WAV.
 - [ ] Later hardware connection can reconcile/transfer compatible project state without destroying virtual-only data.
 
 ### M6 — production quality
+- [x] Production TypeScript/Vite build in GitHub Actions.
 - [ ] Responsive desktop/tablet layout, dockable/resizable editor regions.
 - [ ] Full keyboard command map, MIDI learn where meaningful, undo/redo command stack.
 - [ ] Accessibility for all hardware-style controls.
@@ -106,13 +143,12 @@ Source of truth: `isod89/sloop-fm1/web/EDITOR_PROTOCOL.md` and `firmware/src/edi
 3. Hardware truth is visible: clearly distinguish firmware-backed parameters from virtual-only extensions.
 4. Connection state is never implicit: selected MIDI ports, protocol version, WATCH health, pending transfer and errors stay inspectable.
 5. Sample edits are non-destructive until explicit render/upload; maintain an operation stack and original PCM source.
-6. Never block musical interaction behind modal forms; drilling into details belongs in inspectors/popovers/docked editors.
+6. Never block musical interaction behind modal forms; details belong in inspectors/popovers/docked editors.
 
-## Immediate next implementation batch
+## Next implementation batch after v0.1
 
-1. Full INFO/DESC/TRACK parsers + typed capability model.
-2. `SloopDeviceSession` with request serialization, push routing, reconnect/watch health and cached track/global state.
-3. Explicit MIDI port picker that pairs input/output by normalized names but lets the user override.
-4. Replace demo knobs with descriptor-driven controls bound to the device session.
-5. Implement sequencer data model + synth TRACK_STEP and DRUM_STEP codecs.
-6. Add Vitest protocol fixtures copied from documented/reference behavior, then verify production build.
+1. Exact FM-1 sample builder/uploader: PCM preparation, IMA ADPCM, FSMP zones/loops/CRC, memory estimator and `SMP_BEGIN/WRITE/END` progress/error handling.
+2. Four-track mixer with pan/mute/solo/arm plus dedicated parameter groups/effect rack.
+3. User presets + project slots and JSON project persistence.
+4. Sequencer transform tools: copy/paste, rotate, reverse, quantize/swing and piano roll.
+5. Protocol/reference tests ported from upstream `web/test_web.mjs` and mocked Web MIDI E2E coverage.
