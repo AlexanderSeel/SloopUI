@@ -1,0 +1,7 @@
+const DB_NAME='sloop-ui-samples'; const STORE='samples';
+export interface StoredSample { id:string; name:string; type:string; data:ArrayBuffer; modified:number; }
+function openDb():Promise<IDBDatabase>{return new Promise((resolve,reject)=>{const request=indexedDB.open(DB_NAME,1);request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains(STORE))request.result.createObjectStore(STORE,{keyPath:'id'});};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
+export async function saveSample(name:string,data:ArrayBuffer,type='audio/wav'){const db=await openDb();const item:StoredSample={id:crypto.randomUUID(),name,type,data,modified:Date.now()};await tx(db,'readwrite',store=>store.put(item));return item;}
+export async function listSamples():Promise<StoredSample[]>{const db=await openDb();return new Promise((resolve,reject)=>{const request=db.transaction(STORE).objectStore(STORE).getAll();request.onsuccess=()=>resolve((request.result as StoredSample[]).sort((a,b)=>b.modified-a.modified));request.onerror=()=>reject(request.error);});}
+export async function deleteSample(id:string){const db=await openDb();await tx(db,'readwrite',store=>store.delete(id));}
+async function tx(db:IDBDatabase,mode:IDBTransactionMode,action:(store:IDBObjectStore)=>IDBRequest){return new Promise<void>((resolve,reject)=>{const transaction=db.transaction(STORE,mode);action(transaction.objectStore(STORE));transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);});}
