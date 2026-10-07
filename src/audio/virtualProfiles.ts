@@ -11,5 +11,11 @@ export const SLOOP_FACTORY_PRESETS:Record<SloopVirtualEngine,string[]>={
  WHEEL:['SOUL ORGAN','GOSPEL','JAZZ ORGAN','DIRTY B3','HOUSE ORGN'],
  GRAIN:['LOFI CLOUD','VIBE HAZE','FLUTE DUST'],
 };
+
+export const SLOOP_DRUM_KITS=['ACOUSTIC','DEEP','TIGHT','BRIGHT','DUST','808','909','606','80S','VINTAGE','TRAP','DRILL','BOOMBAP','LO-FI','PHONK','HOUSE','D.HOUSE','TECHNO','MINIMAL','ELECTRO','DISCO','GARAGE','JUNGLE','DUBSTEP','DEMBOW','AMAPIANO','AFRO','LATIN','TRIBAL','SYNTHWV','CHIP','ARCADE','GLITCH','INDUSTR','HYPER','AMBIENT','JAZZ'] as const;
+export const SLOOP_DRUM_LANES=['KICK','KICK 2','SNARE','CLAP','HAT','OPEN HAT','PEDAL','RIM','SNARE 2','LOW TOM','HI TOM','CRASH','RIDE','SHAKER','CONGA','COWBELL'] as const;
+export const SLOOP_DRUM_NOTES=[36,35,38,39,42,46,44,37,40,43,48,49,51,70,63,56] as const;
+export const SLOOP_DEFAULT_DRUM_KIT=5;
+
 export interface VirtualPresetProfile{wave:'sine'|'square'|'sawtooth'|'triangle';attack:number;decay:number;sustain:number;release:number;detune:number;drive:number;}
 export function virtualPresetProfile(engine:SloopVirtualEngine,preset:number):VirtualPresetProfile{const name=SLOOP_FACTORY_PRESETS[engine]?.[preset]??'';let wave:VirtualPresetProfile['wave']='sawtooth';if(engine==='DIGITAL'||engine==='PHASE'||engine==='VOICE')wave='sine';if(engine==='LOFI'||engine==='WHEEL')wave='square';if(engine==='GRAIN')wave='triangle';let attack=.01,decay=.25,sustain=.7,release=.5,detune=0,drive=.05;if(/PAD|STR|CLOUD|HAZE|CHOIR|OOH/.test(name)){attack=.35;release=1.8;sustain=.8;}if(/BASS|808|303/.test(name)){attack=.002;decay=.28;sustain=.45;release=.2;drive=.18;}if(/PLUCK|BELL|VIBES|MARIMBA|KALIMBA|CLAV|STAB/.test(name)){attack=.001;decay=.22;sustain=.12;release=.35;}if(/SUPERSAW|HOOVER|REESE/.test(name)){wave='sawtooth';detune=18;drive=.22;}if(/8BIT|GAME|GB/.test(name)){wave='square';release=.12;}if(/ORGAN|GOSPEL|B3/.test(name)){wave='square';attack=.005;sustain=.92;release=.18;}return{wave,attack,decay,sustain,release,detune,drive};}
