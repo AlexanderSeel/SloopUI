@@ -1,4 +1,5 @@
 import { decodeFrame, encodeFrame, SloopCommand, type SloopFrame } from '../protocol/sloopProtocol';
+import type { MidiPortDescriptor, MidiPortSelection } from './portTypes';
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'error';
 
@@ -25,25 +26,43 @@ export class WebMidiSloopTransport implements SloopTransport {
   private listeners = new Set<(frame: SloopFrame) => void>();
   private pending = new Map<number, Array<{ resolve: (frame: SloopFrame) => void; reject: (error: Error) => void; timer: number }>>();
 
-  async connect(): Promise<void> {
+  constructor(private readonly selection: MidiPortSelection = {}) {}
+
+  static async listPorts(): Promise<MidiPortDescriptor[]> {
     if (!navigator.requestMIDIAccess) throw new Error('Web MIDI is unavailable in this browser.');
+    const access = await navigator.requestMIDIAccess({ sysex: true });
+    const mapPort = (port: any, type: 'input' | 'output'): MidiPortDescriptor => ({
+      id: String(port.id), name: String(port.name ?? 'Unnamed MIDI port'), manufacturer: String(port.manufacturer ?? ''), type,
+    });
+    return [
+      ...Array.from(access.inputs.values(), (port: any) => mapPort(port, 'input')),
+      ...Array.from(access.outputs.values(), (port: any) => mapPort(port, 'output')),
+    ];
+  }
+
+  async connect(): Promise<void> {
+    if (!navigator.requestMIDIAccess) throw new Error('Web MIDI is unavailable in this browser. Use Chrome/Edge over HTTPS or localhost.');
     this.state = 'connecting';
     try {
       this.access = await navigator.requestMIDIAccess({ sysex: true });
       const inputs = [...this.access.inputs.values()];
       const outputs = [...this.access.outputs.values()];
-      const score = (port: any) => /m-vave|fm-1|sloop/i.test(`${port?.manufacturer ?? ''} ${port?.name ?? ''}`) ? 10 : 0;
-      this.input = inputs.sort((a, b) => score(b) - score(a))[0];
-      this.output = outputs.sort((a, b) => score(b) - score(a))[0];
-      if (!this.input || !this.output) throw new Error('No MIDI input/output pair found.');
+      this.input = this.choosePort(inputs, this.selection.inputId);
+      this.output = this.choosePort(outputs, this.selection.outputId);
+      if (!this.input || !this.output) throw new Error('No MIDI input/output pair found. Select the FM-1 ports explicitly and retry.');
+      await this.input.open?.();
+      await this.output.open?.();
       this.input.onmidimessage = (event: any) => this.onMessage(new Uint8Array(event.data));
-      await this.request(SloopCommand.Info, [], 1500);
-      await this.request(SloopCommand.Watch, [3], 1000);
+      this.access.onstatechange = () => {
+        if (this.input?.state === 'disconnected' || this.output?.state === 'disconnected') void this.disconnect();
+      };
+      await this.request(SloopCommand.Info, [], 1800);
+      await this.request(SloopCommand.Watch, [3], 1200);
       this.pingTimer = window.setInterval(() => void this.request(SloopCommand.Ping, [], 900).catch(() => undefined), 1000);
       this.state = 'connected';
     } catch (error) {
-      this.state = 'error';
       await this.disconnect();
+      this.state = 'error';
       throw error;
     }
   }
@@ -55,6 +74,9 @@ export class WebMidiSloopTransport implements SloopTransport {
       try { this.output.send(encodeFrame(SloopCommand.Watch, [0])); } catch { /* disconnected */ }
     }
     if (this.input) this.input.onmidimessage = null;
+    if (this.access) this.access.onstatechange = null;
+    try { await this.input?.close?.(); } catch { /* optional */ }
+    try { await this.output?.close?.(); } catch { /* optional */ }
     this.input = undefined;
     this.output = undefined;
     this.access = undefined;
@@ -80,7 +102,13 @@ export class WebMidiSloopTransport implements SloopTransport {
 
   subscribe(listener: (frame: SloopFrame) => void): () => void {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    return () => { this.listeners.delete(listener); };
+  }
+
+  private choosePort(ports: any[], requestedId?: string): any {
+    if (requestedId) return ports.find((port) => String(port.id) === requestedId);
+    const score = (port: any) => /m-vave|fm-1|sloop/i.test(`${port?.manufacturer ?? ''} ${port?.name ?? ''}`) ? 100 : 0;
+    return [...ports].sort((a, b) => score(b) - score(a))[0];
   }
 
   private onMessage(bytes: Uint8Array): void {
