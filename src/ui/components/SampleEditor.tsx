@@ -1,162 +1,42 @@
-import { Download, Play, Square, Upload } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import type { SessionState } from '../../core/SloopDeviceSession';
+import { Download, Library, Play, Save, Square, Trash2, Upload, WandSparkles } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { SessionState, SloopDeviceSession } from '../../core/SloopDeviceSession';
+import { audioBufferToMonoInt16, buildFm1Sample, FM1_SAMPLE_MAX_DATA } from '../../audio/fm1Sample';
+import { DEFAULT_EFFECTS, renderEffects, type OfflineEffectSettings } from '../../audio/offlineEffects';
+import { deleteSample, listSamples, saveSample, type StoredSample } from '../../audio/sampleLibrary';
 
-export function SampleEditor({ state }: { state: SessionState }) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
-  const contextRef = useRef<AudioContext | null>(null);
-  const [buffer, setBuffer] = useState<AudioBuffer>();
-  const [name, setName] = useState('No local sample loaded');
-  const [selectionStart, setSelectionStart] = useState(0);
-  const [selectionEnd, setSelectionEnd] = useState(1);
-  const [playing, setPlaying] = useState(false);
-
-  useEffect(() => { drawWaveform(canvas.current, buffer, selectionStart, selectionEnd); }, [buffer, selectionStart, selectionEnd]);
-  useEffect(() => () => { try { sourceRef.current?.stop(); } catch { /* already stopped */ } void contextRef.current?.close(); }, []);
-
-  async function load(file: File) {
-    const context = new AudioContext();
-    const decoded = await context.decodeAudioData(await file.arrayBuffer());
-    setBuffer(decoded);
-    setName(file.name);
-    setSelectionStart(0);
-    setSelectionEnd(1);
-    await context.close();
-  }
-
-  function transform(kind: 'normalize' | 'reverse' | 'fade-in' | 'fade-out' | 'trim') {
-    if (!buffer) return;
-    const start = Math.floor(buffer.length * selectionStart);
-    const end = Math.max(start + 1, Math.floor(buffer.length * selectionEnd));
-    const outputLength = kind === 'trim' ? end - start : buffer.length;
-    const context = new AudioContext();
-    const output = context.createBuffer(buffer.numberOfChannels, outputLength, buffer.sampleRate);
-    for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
-      const source = buffer.getChannelData(channel);
-      const target = output.getChannelData(channel);
-      if (kind === 'trim') target.set(source.slice(start, end)); else target.set(source);
-      if (kind === 'reverse') target.reverse();
-      if (kind === 'normalize') {
-        let peak = 0;
-        for (const value of target) peak = Math.max(peak, Math.abs(value));
-        if (peak > 0) for (let i = 0; i < target.length; i++) target[i] /= peak;
-      }
-      if (kind === 'fade-in' || kind === 'fade-out') {
-        const fadeSamples = Math.max(1, Math.min(target.length, Math.floor(buffer.sampleRate * 0.05)));
-        for (let i = 0; i < fadeSamples; i++) {
-          const gain = kind === 'fade-in' ? i / fadeSamples : (fadeSamples - i) / fadeSamples;
-          const index = kind === 'fade-in' ? i : target.length - fadeSamples + i;
-          target[index] *= gain;
-        }
-      }
-    }
-    setBuffer(output);
-    if (kind === 'trim') { setSelectionStart(0); setSelectionEnd(1); }
-    void context.close();
-  }
-
-  async function togglePreview() {
-    if (!buffer) return;
-    if (playing) {
-      try { sourceRef.current?.stop(); } catch { /* already stopped */ }
-      setPlaying(false);
-      return;
-    }
-    const context = contextRef.current && contextRef.current.state !== 'closed' ? contextRef.current : new AudioContext();
-    contextRef.current = context;
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(context.destination);
-    source.onended = () => setPlaying(false);
-    const startSeconds = buffer.duration * selectionStart;
-    const duration = Math.max(0.001, buffer.duration * (selectionEnd - selectionStart));
-    source.start(0, startSeconds, duration);
-    sourceRef.current = source;
-    setPlaying(true);
-  }
-
-  function exportWav() {
-    if (!buffer) return;
-    const wav = audioBufferToWav(buffer);
-    const href = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
-    const anchor = document.createElement('a');
-    anchor.href = href;
-    anchor.download = `${name.replace(/\.[^.]+$/, '') || 'sample'}-edited.wav`;
-    anchor.click();
-    setTimeout(() => URL.revokeObjectURL(href), 1000);
-  }
-
-  return <section className="hardware-panel rounded-xl p-4">
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-      <div>
-        <b>Sample Lab</b>
-        <div className="text-xs text-zinc-500">{name}{buffer ? ` · ${buffer.sampleRate} Hz · ${buffer.numberOfChannels}ch · ${buffer.duration.toFixed(2)} s` : ''}</div>
-      </div>
-      <div className="flex flex-wrap gap-1 text-xs">
-        <label className="cursor-pointer rounded border border-white/10 bg-white/4 px-2.5 py-1.5 hover:bg-white/8"><Upload size={13} className="mr-1 inline" />LOAD<input className="hidden" type="file" accept="audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void load(file); }} /></label>
-        <button disabled={!buffer} onClick={() => void togglePreview()} className="rounded border border-white/10 px-2.5 py-1.5 disabled:opacity-30">{playing ? <Square size={12} className="mr-1 inline" /> : <Play size={12} className="mr-1 inline" />}{playing ? 'Stop' : 'Preview'}</button>
-        <button disabled={!buffer} onClick={() => transform('trim')} className="rounded border border-white/10 px-2.5 py-1.5 disabled:opacity-30">Trim</button>
-        <button disabled={!buffer} onClick={() => transform('fade-in')} className="rounded border border-white/10 px-2.5 py-1.5 disabled:opacity-30">Fade In</button>
-        <button disabled={!buffer} onClick={() => transform('fade-out')} className="rounded border border-white/10 px-2.5 py-1.5 disabled:opacity-30">Fade Out</button>
-        <button disabled={!buffer} onClick={() => transform('normalize')} className="rounded border border-white/10 px-2.5 py-1.5 disabled:opacity-30">Normalize</button>
-        <button disabled={!buffer} onClick={() => transform('reverse')} className="rounded border border-white/10 px-2.5 py-1.5 disabled:opacity-30">Reverse</button>
-        <button disabled={!buffer} onClick={exportWav} className="rounded bg-amber-300 px-2.5 py-1.5 font-bold text-black disabled:opacity-30"><Download size={13} className="mr-1 inline" />WAV</button>
-      </div>
-    </div>
-
-    <canvas ref={canvas} className="h-44 w-full rounded border border-white/8 bg-black/35" />
-    <div className="mt-2 grid gap-2 md:grid-cols-2">
-      <label className="text-[10px] font-bold uppercase tracking-[.12em] text-zinc-500">Start {Math.round(selectionStart * 100)}%<input disabled={!buffer} className="mt-1 w-full accent-cyan-300" type="range" min={0} max={0.99} step={0.001} value={selectionStart} onChange={(event) => setSelectionStart(Math.min(Number(event.target.value), selectionEnd - 0.001))} /></label>
-      <label className="text-[10px] font-bold uppercase tracking-[.12em] text-zinc-500">End {Math.round(selectionEnd * 100)}%<input disabled={!buffer} className="mt-1 w-full accent-cyan-300" type="range" min={0.01} max={1} step={0.001} value={selectionEnd} onChange={(event) => setSelectionEnd(Math.max(Number(event.target.value), selectionStart + 0.001))} /></label>
-    </div>
-
-    <div className="mt-3 grid gap-2 sm:grid-cols-3">
-      {state.sampleSlots.map((slot) => <div key={slot.index} className="rounded border border-white/8 bg-black/20 p-2 text-xs"><b>USR{slot.index + 1}</b><span className="ml-2 text-zinc-500">{slot.zones ? slot.name || 'sample' : 'empty'} · {slot.dataKiB} KiB</span></div>)}
-      {!state.sampleSlots.length && <div className="text-xs text-zinc-600">Sample slot information unavailable.</div>}
-    </div>
-  </section>;
+type ZoneDraft={name:string;buffer:AudioBuffer;root:number;low:number;high:number;looped:boolean;loopStart:number;loopEnd:number};
+export function SampleEditor({state,session}:{state:SessionState;session:SloopDeviceSession}){
+ const canvas=useRef<HTMLCanvasElement>(null),sourceRef=useRef<AudioBufferSourceNode|null>(null),contextRef=useRef<AudioContext|null>(null);
+ const [zones,setZones]=useState<ZoneDraft[]>([]),[selected,setSelected]=useState(0),[selectionStart,setSelectionStart]=useState(0),[selectionEnd,setSelectionEnd]=useState(1),[playing,setPlaying]=useState(false),[zoom,setZoom]=useState(1),[pan,setPan]=useState(0),[bpm,setBpm]=useState(120),[slot,setSlot]=useState(0),[slotName,setSlotName]=useState('SLOOP'),[uploadProgress,setUploadProgress]=useState(''),[fx,setFx]=useState<OfflineEffectSettings>({...DEFAULT_EFFECTS}),[library,setLibrary]=useState<StoredSample[]>([]);
+ const zone=zones[selected],buffer=zone?.buffer;const memory=useMemo(()=>zones.reduce((sum,z)=>sum+Math.ceil(audioBufferToMonoInt16(z.buffer).length/2),0),[zones]);
+ useEffect(()=>{drawWaveform(canvas.current,buffer,selectionStart,selectionEnd,zoom,pan);},[buffer,selectionStart,selectionEnd,zoom,pan]);
+ useEffect(()=>()=>{try{sourceRef.current?.stop();}catch{}void contextRef.current?.close();},[]);
+ useEffect(()=>{void refreshLibrary();},[]);
+ async function refreshLibrary(){try{setLibrary(await listSamples());}catch{/* IndexedDB may be unavailable */}}
+ async function decodeFiles(files:File[]){const remaining=Math.max(0,16-zones.length);const add:ZoneDraft[]=[];for(const file of files.slice(0,remaining)){const ctx=new AudioContext();try{const decoded=await ctx.decodeAudioData(await file.arrayBuffer());const root=rootFromName(file.name);add.push({name:file.name,buffer:decoded,root,low:root,high:root,looped:false,loopStart:0,loopEnd:1});}finally{await ctx.close();}}setZones(current=>[...current,...add]);if(!zones.length&&add.length)setSelected(0);}
+ function replaceBuffer(next:AudioBuffer){setZones(current=>current.map((z,i)=>i===selected?{...z,buffer:next}:z));}
+ function transform(kind:'trim'|'reverse'|'normalize'|'fade-in'|'fade-out'|'silence'|'dc'|'rms') {if(!buffer)return;const start=Math.floor(buffer.length*selectionStart),end=Math.max(start+1,Math.floor(buffer.length*selectionEnd));const outputLength=kind==='trim'?end-start:buffer.length;const ctx=new OfflineAudioContext(buffer.numberOfChannels,outputLength,buffer.sampleRate);const out=ctx.createBuffer(buffer.numberOfChannels,outputLength,buffer.sampleRate);for(let c=0;c<buffer.numberOfChannels;c++){const src=buffer.getChannelData(c),dst=out.getChannelData(c);if(kind==='trim')dst.set(src.slice(start,end));else dst.set(src);if(kind==='reverse')dst.reverse();if(kind==='silence')dst.fill(0,start,end);if(kind==='dc'){let mean=0;for(const v of dst)mean+=v;mean/=dst.length;for(let i=0;i<dst.length;i++)dst[i]-=mean;}if(kind==='normalize'){let peak=1e-9;for(const v of dst)peak=Math.max(peak,Math.abs(v));for(let i=0;i<dst.length;i++)dst[i]=dst[i]/peak*.98;}if(kind==='rms'){let sum=0;for(const v of dst)sum+=v*v;const rms=Math.sqrt(sum/dst.length),target=10**(-14/20);if(rms>1e-9)for(let i=0;i<dst.length;i++)dst[i]*=target/rms;}if(kind==='fade-in'||kind==='fade-out'){const n=Math.max(1,Math.min(dst.length,Math.floor(buffer.sampleRate*.05)));for(let i=0;i<n;i++){const gain=kind==='fade-in'?i/n:(n-i)/n,index=kind==='fade-in'?i:dst.length-n+i;dst[index]*=gain;}}}replaceBuffer(out);if(kind==='trim'){setSelectionStart(0);setSelectionEnd(1);}}
+ async function applyFx(){if(!buffer)return;setUploadProgress('Rendering effects…');try{replaceBuffer(await renderEffects(buffer,fx));setUploadProgress('Effects rendered');}catch(e){setUploadProgress(e instanceof Error?e.message:'Render failed');}}
+ async function preview(){if(!buffer)return;if(playing){try{sourceRef.current?.stop();}catch{}setPlaying(false);return;}const ctx=contextRef.current&&contextRef.current.state!=='closed'?contextRef.current:new AudioContext();contextRef.current=ctx;const src=ctx.createBufferSource();src.buffer=buffer;src.connect(ctx.destination);src.onended=()=>setPlaying(false);src.start(0,buffer.duration*selectionStart,Math.max(.001,buffer.duration*(selectionEnd-selectionStart)));sourceRef.current=src;setPlaying(true);}
+ function snapZero(which:'start'|'end'){if(!buffer)return;const data=buffer.getChannelData(0),origin=Math.floor(data.length*(which==='start'?selectionStart:selectionEnd)),radius=Math.min(2000,data.length);let best=origin,bestAbs=Infinity;for(let i=Math.max(1,origin-radius);i<Math.min(data.length-1,origin+radius);i++){const crossing=(data[i-1]<=0&&data[i]>=0)||(data[i-1]>=0&&data[i]<=0);if(crossing&&Math.abs(data[i])<bestAbs){best=i;bestAbs=Math.abs(data[i]);}}const ratio=best/data.length;if(which==='start')setSelectionStart(Math.min(ratio,selectionEnd-.001));else setSelectionEnd(Math.max(ratio,selectionStart+.001));}
+ function findTransient(){if(!buffer)return;const data=buffer.getChannelData(0);let best=0,score=0;for(let i=1;i<data.length;i++){const s=Math.abs(data[i]-data[i-1]);if(s>score){score=s;best=i;}}setSelectionStart(Math.min(best/data.length,selectionEnd-.001));}
+ function quantizeSelection(){if(!buffer)return;const step=60/Math.max(1,bpm)/4;const snap=(ratio:number)=>Math.max(0,Math.min(1,Math.round((ratio*buffer.duration)/step)*step/buffer.duration));const a=snap(selectionStart),b=snap(selectionEnd);setSelectionStart(Math.min(a,b-.001));setSelectionEnd(Math.max(b,a+.001));}
+ async function upload(){if(!zones.length)return;setUploadProgress('Preparing 22.05 kHz ADPCM…');try{const inputs=zones.map(z=>{const samples=audioBufferToMonoInt16(z.buffer);return{samples,root:z.root,low:z.low,high:z.high,looped:z.looped,loopStart:Math.round(z.loopStart*(samples.length-1)),loopEnd:Math.round(z.loopEnd*(samples.length-1))};});const built=buildFm1Sample(slotName,inputs);await session.uploadSample(slot,built,(done,total)=>setUploadProgress(`Uploading ${Math.round(done/Math.max(1,total)*100)}%`));setUploadProgress(`USR${slot+1} uploaded · ${built.data.length} B`);}catch(e){setUploadProgress(e instanceof Error?e.message:'Upload failed');}}
+ function exportWav(){if(!buffer)return;const wav=audioBufferToWav(buffer);download(`${strip(zone.name)}-edited.wav`,wav,'audio/wav');}
+ async function saveLocal(){if(!buffer)return;await saveSample(`${strip(zone.name)}-edited.wav`,audioBufferToWav(buffer),'audio/wav');await refreshLibrary();}
+ async function loadStored(item:StoredSample){const ctx=new AudioContext();try{const decoded=await ctx.decodeAudioData(item.data.slice(0));const root=rootFromName(item.name);setZones(current=>[...current.slice(0,15),{name:item.name,buffer:decoded,root,low:root,high:root,looped:false,loopStart:0,loopEnd:1}]);setSelected(Math.min(15,zones.length));}finally{await ctx.close();}}
+ function updateZone(patch:Partial<ZoneDraft>){setZones(current=>current.map((z,i)=>i===selected?{...z,...patch}:z));}
+ return <section className="hardware-panel rounded-xl p-4" id="samples"><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><b>Sample Lab</b><div className="text-xs text-zinc-500">{zone?.name??'No sample loaded'} · {zones.length}/16 zones · estimated ADPCM {memory} / {FM1_SAMPLE_MAX_DATA} B</div></div><div className="flex flex-wrap gap-1"><label className="tool cursor-pointer"><Upload size={12} className="mr-1 inline"/>LOAD<input className="hidden" multiple type="file" accept="audio/*" onChange={e=>void decodeFiles([...e.target.files??[]])}/></label><button disabled={!buffer} onClick={()=>void preview()} className="tool">{playing?<Square size={12}/>:<Play size={12}/>}</button><button disabled={!buffer} onClick={exportWav} className="tool"><Download size={12}/> WAV</button><button disabled={!buffer} onClick={()=>void saveLocal()} className="tool"><Save size={12}/> Library</button></div></div>
+  <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px]"><div><canvas ref={canvas} onClick={e=>{if(!buffer)return;const r=e.currentTarget.getBoundingClientRect(),visible=1/zoom,start=pan*(1-visible),position=start+(e.clientX-r.left)/r.width*visible;setSelectionStart(Math.min(position,selectionEnd-.001));}} className="h-52 w-full rounded border border-white/8 bg-black/35"/><div className="mt-2 grid gap-2 md:grid-cols-4"><label className="field">Start {Math.round(selectionStart*100)}%<input type="range" min={0} max={.99} step={.001} value={selectionStart} onChange={e=>setSelectionStart(Math.min(Number(e.target.value),selectionEnd-.001))}/></label><label className="field">End {Math.round(selectionEnd*100)}%<input type="range" min={.01} max={1} step={.001} value={selectionEnd} onChange={e=>setSelectionEnd(Math.max(Number(e.target.value),selectionStart+.001))}/></label><label className="field">Zoom ×{zoom.toFixed(1)}<input type="range" min={1} max={20} step={.5} value={zoom} onChange={e=>setZoom(Number(e.target.value))}/></label><label className="field">Pan<input disabled={zoom===1} type="range" min={0} max={1} step={.001} value={pan} onChange={e=>setPan(Number(e.target.value))}/></label></div>
+   <div className="mt-2 flex flex-wrap gap-1"><button onClick={()=>transform('trim')} className="tool">Trim</button><button onClick={()=>transform('silence')} className="tool">Silence</button><button onClick={()=>transform('fade-in')} className="tool">Fade in</button><button onClick={()=>transform('fade-out')} className="tool">Fade out</button><button onClick={()=>transform('normalize')} className="tool">Peak norm</button><button onClick={()=>transform('rms')} className="tool">RMS -14 dB</button><button onClick={()=>transform('dc')} className="tool">DC remove</button><button onClick={()=>transform('reverse')} className="tool">Reverse</button><button onClick={()=>snapZero('start')} className="tool">Zero start</button><button onClick={()=>snapZero('end')} className="tool">Zero end</button><button onClick={findTransient} className="tool">Find transient</button><label className="tool">BPM <input className="ml-1 w-12 bg-transparent" type="number" value={bpm} onChange={e=>setBpm(Number(e.target.value))}/></label><button onClick={quantizeSelection} className="tool">Quantize 1/16</button></div>
+   <details className="mt-3 rounded-lg border border-white/8 bg-black/20 p-3"><summary className="cursor-pointer text-xs font-bold"><WandSparkles size={13} className="mr-1 inline"/>Offline effect chain / transform</summary><div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><NumberField label="Gain dB" value={fx.gainDb} min={-24} max={24} step={.5} onChange={gainDb=>setFx({...fx,gainDb})}/><NumberField label="Low-pass Hz" value={fx.lowpassHz} min={100} max={20000} step={100} onChange={lowpassHz=>setFx({...fx,lowpassHz})}/><NumberField label="Saturation" value={fx.saturation} min={0} max={1} step={.05} onChange={saturation=>setFx({...fx,saturation})}/><NumberField label="Delay ms" value={fx.delayMs} min={0} max={800} step={10} onChange={delayMs=>setFx({...fx,delayMs})}/><NumberField label="Feedback" value={fx.delayFeedback} min={0} max={.9} step={.05} onChange={delayFeedback=>setFx({...fx,delayFeedback})}/><NumberField label="Reverb" value={fx.reverb} min={0} max={1} step={.05} onChange={reverb=>setFx({...fx,reverb})}/><NumberField label="Pitch semitones" value={fx.pitchSemitones} min={-12} max={12} step={1} onChange={pitchSemitones=>setFx({...fx,pitchSemitones})}/><NumberField label="Time stretch" value={fx.timeStretch} min={.5} max={2} step={.05} onChange={timeStretch=>setFx({...fx,timeStretch})}/><label className="field"><input type="checkbox" checked={fx.dcRemove} onChange={e=>setFx({...fx,dcRemove:e.target.checked})}/> DC removal</label><label className="field"><input type="checkbox" checked={fx.normalizePeak} onChange={e=>setFx({...fx,normalizePeak:e.target.checked})}/> Normalize output</label><button onClick={()=>void applyFx()} className="rounded bg-violet-300 px-3 py-2 text-xs font-black text-black">RENDER CHAIN</button></div></details>
+  </div><aside className="space-y-3"><div className="rounded-lg border border-white/8 bg-black/20 p-3"><div className="mb-2 text-[10px] font-black uppercase tracking-widest text-zinc-500">Zones</div><div className="max-h-40 space-y-1 overflow-auto">{zones.map((z,i)=><button key={`${z.name}-${i}`} onClick={()=>{setSelected(i);setSelectionStart(z.loopStart);setSelectionEnd(z.loopEnd);}} className={`flex w-full items-center justify-between rounded border px-2 py-1.5 text-left text-[10px] ${i===selected?'border-amber-300/50 bg-amber-300/10':'border-white/7'}`}><span className="truncate">{i+1}. {z.name}</span><span className="font-mono text-zinc-500">{noteName(z.root)}</span></button>)}</div>{zone&&<div className="mt-3 grid grid-cols-3 gap-1"><MiniNumber label="Root" value={zone.root} onChange={root=>updateZone({root})}/><MiniNumber label="Low" value={zone.low} onChange={low=>updateZone({low})}/><MiniNumber label="High" value={zone.high} onChange={high=>updateZone({high})}/><label className="field col-span-3"><input type="checkbox" checked={zone.looped} onChange={e=>updateZone({looped:e.target.checked,loopStart:selectionStart,loopEnd:selectionEnd})}/> Loop selected region</label><button onClick={()=>setZones(current=>current.filter((_,i)=>i!==selected))} className="tool col-span-3"><Trash2 size={11}/> Remove zone</button></div>}</div>
+   <div className="rounded-lg border border-amber-300/15 bg-amber-300/[.03] p-3"><div className="text-[10px] font-black uppercase tracking-widest text-amber-200">FM-1 transfer</div><div className="mt-2 grid grid-cols-2 gap-2"><label className="field">Slot<select className="select" value={slot} onChange={e=>setSlot(Number(e.target.value))}><option value={0}>USR1</option><option value={1}>USR2</option><option value={2}>USR3</option></select></label><label className="field">Name<input className="input" maxLength={8} value={slotName} onChange={e=>setSlotName(e.target.value)}/></label></div><button disabled={!zones.length||memory>FM1_SAMPLE_MAX_DATA} onClick={()=>void upload()} className="mt-2 w-full rounded bg-amber-300 px-3 py-2 text-xs font-black text-black disabled:opacity-30">UPLOAD TO USR{slot+1}</button><div className="mt-1 text-[9px] text-zinc-500">{uploadProgress}</div><div className="mt-2 space-y-1">{state.sampleSlots.map(s=><div key={s.index} className="flex items-center text-[10px]"><b>USR{s.index+1}</b><span className="ml-2 truncate text-zinc-500">{s.zones?s.name:'empty'} · {s.dataKiB} KiB</span><button disabled={!s.zones} onClick={()=>void session.eraseSample(s.index)} className="ml-auto text-rose-300 disabled:opacity-20">erase</button></div>)}</div></div>
+   <details className="rounded-lg border border-white/8 bg-black/20 p-3"><summary className="cursor-pointer text-xs"><Library size={12} className="mr-1 inline"/>Local library ({library.length})</summary><div className="mt-2 max-h-40 space-y-1 overflow-auto">{library.map(item=><div key={item.id} className="flex items-center gap-1 text-[9px]"><button onClick={()=>void loadStored(item)} className="min-w-0 flex-1 truncate text-left text-zinc-400 hover:text-white">{item.name}</button><button onClick={()=>void deleteSample(item.id).then(refreshLibrary)}><Trash2 size={10}/></button></div>)}</div></details></aside></div>
+ </section>;
 }
-
-function drawWaveform(canvas: HTMLCanvasElement | null, buffer: AudioBuffer | undefined, selectionStart: number, selectionEnd: number) {
-  if (!canvas) return;
-  const ratio = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.round(canvas.clientWidth * ratio));
-  canvas.height = Math.max(1, Math.round(canvas.clientHeight * ratio));
-  const context = canvas.getContext('2d');
-  if (!context) return;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.strokeStyle = 'rgba(255,255,255,.08)';
-  context.beginPath(); context.moveTo(0, canvas.height / 2); context.lineTo(canvas.width, canvas.height / 2); context.stroke();
-  if (!buffer) return;
-  const data = buffer.getChannelData(0);
-  const mid = canvas.height / 2;
-  context.strokeStyle = '#fcd34d';
-  context.lineWidth = ratio;
-  context.beginPath();
-  for (let x = 0; x < canvas.width; x++) {
-    const index = Math.min(data.length - 1, Math.floor(x / canvas.width * data.length));
-    const y = mid - data[index] * mid * .9;
-    if (x === 0) context.moveTo(x, y); else context.lineTo(x, y);
-  }
-  context.stroke();
-  context.fillStyle = 'rgba(34,211,238,.12)';
-  context.fillRect(canvas.width * selectionStart, 0, canvas.width * (selectionEnd - selectionStart), canvas.height);
-  context.strokeStyle = '#67e8f9';
-  for (const position of [selectionStart, selectionEnd]) { context.beginPath(); context.moveTo(canvas.width * position, 0); context.lineTo(canvas.width * position, canvas.height); context.stroke(); }
-}
-
-function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
-  const channels = buffer.numberOfChannels;
-  const length = buffer.length * channels * 2 + 44;
-  const output = new ArrayBuffer(length);
-  const view = new DataView(output);
-  const writeString = (offset: number, value: string) => { for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i)); };
-  writeString(0, 'RIFF'); view.setUint32(4, length - 8, true); writeString(8, 'WAVE'); writeString(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, channels, true); view.setUint32(24, buffer.sampleRate, true); view.setUint32(28, buffer.sampleRate * channels * 2, true); view.setUint16(32, channels * 2, true); view.setUint16(34, 16, true); writeString(36, 'data'); view.setUint32(40, length - 44, true);
-  let offset = 44;
-  for (let frame = 0; frame < buffer.length; frame++) for (let channel = 0; channel < channels; channel++) {
-    const sample = Math.max(-1, Math.min(1, buffer.getChannelData(channel)[frame]));
-    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true); offset += 2;
-  }
-  return output;
-}
+function NumberField({label,value,min,max,step,onChange}:{label:string;value:number;min:number;max:number;step:number;onChange:(v:number)=>void}){return <label className="field">{label}<input className="input" type="number" min={min} max={max} step={step} value={value} onChange={e=>onChange(Number(e.target.value))}/></label>;}function MiniNumber({label,value,onChange}:{label:string;value:number;onChange:(v:number)=>void}){return <label className="field">{label}<input className="input" type="number" min={0} max={127} value={value} onChange={e=>onChange(Math.max(0,Math.min(127,Number(e.target.value))))}/></label>;}
+function drawWaveform(canvas:HTMLCanvasElement|null,buffer:AudioBuffer|undefined,a:number,b:number,zoom:number,pan:number){if(!canvas)return;const ratio=devicePixelRatio||1;canvas.width=Math.max(1,Math.round(canvas.clientWidth*ratio));canvas.height=Math.max(1,Math.round(canvas.clientHeight*ratio));const c=canvas.getContext('2d');if(!c)return;c.clearRect(0,0,canvas.width,canvas.height);c.strokeStyle='rgba(255,255,255,.08)';c.beginPath();c.moveTo(0,canvas.height/2);c.lineTo(canvas.width,canvas.height/2);c.stroke();if(!buffer)return;const data=buffer.getChannelData(0),visible=1/zoom,start=Math.max(0,Math.min(1-visible,pan*(1-visible))),end=start+visible,mid=canvas.height/2;c.strokeStyle='#fcd34d';c.beginPath();for(let x=0;x<canvas.width;x++){const index=Math.min(data.length-1,Math.floor((start+x/canvas.width*(end-start))*data.length)),y=mid-data[index]*mid*.9;if(x===0)c.moveTo(x,y);else c.lineTo(x,y);}c.stroke();c.fillStyle='rgba(34,211,238,.12)';const left=(a-start)/visible*canvas.width,right=(b-start)/visible*canvas.width;c.fillRect(left,0,right-left,canvas.height);c.strokeStyle='#67e8f9';for(const pos of[a,b]){const x=(pos-start)/visible*canvas.width;c.beginPath();c.moveTo(x,0);c.lineTo(x,canvas.height);c.stroke();}}
+function audioBufferToWav(buffer:AudioBuffer){const channels=buffer.numberOfChannels,length=buffer.length*channels*2+44,out=new ArrayBuffer(length),v=new DataView(out),str=(o:number,t:string)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i));};str(0,'RIFF');v.setUint32(4,length-8,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,channels,true);v.setUint32(24,buffer.sampleRate,true);v.setUint32(28,buffer.sampleRate*channels*2,true);v.setUint16(32,channels*2,true);v.setUint16(34,16,true);str(36,'data');v.setUint32(40,length-44,true);let o=44;for(let f=0;f<buffer.length;f++)for(let c=0;c<channels;c++){const s=Math.max(-1,Math.min(1,buffer.getChannelData(c)[f]));v.setInt16(o,s<0?s*0x8000:s*0x7fff,true);o+=2;}return out;}
+function rootFromName(name:string){const m=/(?<![A-Za-z])([A-G])([#b]?)(-?\d)(?!\d)/i.exec(name);if(!m)return 60;const base:{[k:string]:number}={C:0,D:2,E:4,F:5,G:7,A:9,B:11};return Math.max(0,Math.min(127,base[m[1].toUpperCase()]+(m[2]==='#'?1:m[2]==='b'?-1:0)+(Number(m[3])+1)*12));}function noteName(n:number){const names=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];return`${names[n%12]}${Math.floor(n/12)-1}`;}function strip(name:string){return name.replace(/\.[^.]+$/,'')||'sample';}function download(name:string,data:BlobPart,type:string){const url=URL.createObjectURL(new Blob([data],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
