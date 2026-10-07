@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #0b0d0f;
+  color: #edf1f4;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { min-height: 100%; margin: 0; }
+body {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(64, 83, 89, .22), transparent 34rem),
+    linear-gradient(180deg, #111417 0%, #090b0d 100%);
+}
+button, input { font: inherit; }
+
+.hardware-panel {
+  background: linear-gradient(180deg, #252a2f, #15191d 52%, #101316);
+  border: 1px solid rgba(255,255,255,.09);
+  box-shadow: inset 0 1px rgba(255,255,255,.05), 0 18px 50px rgba(0,0,0,.28);
+}
+.knob {
+  background: radial-gradient(circle at 34% 30%, #555d63 0 10%, #2d3338 11% 48%, #111417 49% 67%, #050607 68%);
+  box-shadow: inset -5px -7px 12px rgba(0,0,0,.55), inset 4px 4px 8px rgba(255,255,255,.09), 0 7px 16px rgba(0,0,0,.35);
+}
+.grid-lines {
+  background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
